@@ -11,3 +11,4 @@ coverage
 !.vscode/extensions.json
 settings.local.json
 .vitest/
+.ui-compare/

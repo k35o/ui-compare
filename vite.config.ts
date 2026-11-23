@@ -17,14 +17,17 @@ export default defineConfig({
     overrides: [{ files: [...TEST_GLOBS], ...test }],
   },
   pack: {
-    entry: ['src/index.ts'],
+    entry: ['src/cli.ts'],
     format: 'esm',
-    dts: true,
+    dts: false,
     outDir: 'dist',
     unbundle: true,
   },
   test: {
     include: ['tests/**/*.test.ts'],
+    // Most suites drive a real Chromium.
+    testTimeout: 60_000,
+    hookTimeout: 60_000,
   },
   staged: {
     '*.{js,ts,cjs,mjs,jsx,tsx,json,jsonc}': 'vp check --fix',
