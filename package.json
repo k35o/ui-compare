@@ -40,7 +40,8 @@
     "check": "vp check",
     "check:write": "vp check --fix",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "pnpm build"
+    "prepublishOnly": "pnpm build",
+    "skill:validate": "skills-ref validate skills/ui-compare"
   },
   "dependencies": {
     "cac": "7.1.0",
@@ -52,6 +53,7 @@
     "@k8o/oxc-config": "1.1.0",
     "@types/node": "26.6.6",
     "@types/pngjs": "6.0.5",
+    "skills-ref": "0.1.5",
     "typescript": "7.0.2",
     "vite-plus": "catalog:"
   },
