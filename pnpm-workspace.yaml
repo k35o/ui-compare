@@ -1,0 +1,32 @@
+blockExoticSubdeps: true
+
+minimumReleaseAge: 10080
+minimumReleaseAgeExclude:
+  - '@k8o/*'
+
+strictDepBuilds: true
+
+allowBuilds:
+  esbuild: false
+
+verifyDepsBeforeRun: install
+
+saveExact: true
+autoInstallPeers: false
+
+catalog:
+  vite: npm:@voidzero-dev/vite-plus-core@1.4.0
+  vite-plus: 1.4.0
+
+overrides:
+  vite@*: 'catalog:'
+
+peerDependencyRules:
+  allowAny:
+    - vite
+  allowedVersions:
+    vite: '*'
+
+versioning:
+  changelog:
+    storage: repository
