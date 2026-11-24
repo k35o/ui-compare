@@ -36,6 +36,7 @@ export type Change = {
   variants: Variant[];
   crops: Crop[];
   fullPage: boolean;
+  marks: Box[];
   dimensions?: {
     before: [width: number, height: number];
     after: [width: number, height: number];
@@ -221,7 +222,12 @@ function changeOf(
         before: crop(before, box),
         after: crop(after, box),
       }));
-  const change: Change = { variants: [variant], crops, fullPage };
+  const change: Change = {
+    variants: [variant],
+    crops,
+    fullPage,
+    marks: fullPage ? regions : areas.map(({ area }) => area),
+  };
   if (dimensions !== undefined) change.dimensions = dimensions;
   return change;
 }

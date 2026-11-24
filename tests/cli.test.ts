@@ -1,6 +1,13 @@
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { existsSync, writeFileSync } from 'node:fs';
+import {
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  utimes,
+  writeFile,
+} from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -19,6 +26,7 @@ import {
   test,
 } from 'vite-plus/test';
 
+import type { ReviewFile } from '../plugin/hooks/review-file.ts';
 import type { Summary } from '../src/types.ts';
 
 type CliResult = { code: number | null; stdout: string; stderr: string };
@@ -869,5 +877,78 @@ describe('after', () => {
       stderr:
         'ui-compare: No run zzzzzz in .ui-compare: there are no runs yet. Start one with: ui-compare before <targets...>\n',
     });
+  });
+});
+
+describe('the Claude Code pane', () => {
+  const paneAlive = () => join(cwd, '.ui-compare', 'pane-alive');
+
+  async function changedRun(path: string): Promise<string> {
+    pages.set(path, box('#000'));
+    const id = await before(`${origin}${path}`, '--viewport', '400x300');
+    pages.set(path, box('#f00'));
+    return id;
+  }
+
+  test('while the pane keeps pane-alive fresh, after writes review.json but no report.html and points to the pane', async () => {
+    const id = await changedRun('/pane');
+    await writeFile(paneAlive(), '');
+    const touching = setInterval(() => {
+      writeFileSync(paneAlive(), '');
+    }, 1000);
+    const result = await uiCompare('after', id).finally(() => {
+      clearInterval(touching);
+    });
+
+    const key = `001-127-0-0-1-${port}-pane-400x300-light`;
+    expect(result).toStrictEqual({
+      code: 0,
+      stderr: '',
+      stdout: lines(
+        `Compared run ${id}: 1 screen changed, 0 errors`,
+        `  changed    ${origin}/pane`,
+        `    400x300: 1 area at x=10 y=20 30x40  .ui-compare/${id}/diff/${key}.png`,
+        'Report:  shown in the ui-compare pane in Claude Code',
+        `Summary: .ui-compare/${id}/summary.json`,
+      ),
+    });
+    expect(existsSync(join(cwd, `.ui-compare/${id}/report.html`))).toBe(false);
+    const review = await readJson<ReviewFile>(id, 'review.json');
+    expect({
+      id: review.id,
+      diffs: review.changed.flatMap(({ changes }) =>
+        changes.map(({ diff }) => diff),
+      ),
+      strips: (
+        await readdir(join(cwd, '.ui-compare', id, 'review'))
+      ).toSorted(),
+    }).toStrictEqual({
+      id,
+      diffs: [`diff/${key}.png`],
+      strips: [
+        `${key}-crop-0-after-0.png`,
+        `${key}-crop-0-before-0.png`,
+        `${key}-page-after-0.png`,
+        `${key}-page-before-0.png`,
+      ],
+    });
+  });
+
+  test('with a pane-alive left over from a pane that closed, after writes review.json and report.html', async () => {
+    const id = await changedRun('/closed-pane');
+    await writeFile(paneAlive(), '');
+    const stale = new Date(Date.now() - 60_000);
+    await utimes(paneAlive(), stale, stale);
+
+    const result = await uiCompare('after', id);
+
+    expect(result.stdout).toContain(
+      `\nReport:  .ui-compare/${id}/report.html\n`,
+    );
+    expect(
+      ['report.html', 'review.json'].map((file) =>
+        existsSync(join(cwd, '.ui-compare', id, file)),
+      ),
+    ).toStrictEqual([true, true]);
   });
 });

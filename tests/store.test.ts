@@ -1,11 +1,27 @@
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  symlink,
+  utimes,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, test } from 'vite-plus/test';
 
 import { UsageError } from '../src/errors.ts';
-import { createRun, readRun, runDir, writeRun } from '../src/store.ts';
+import {
+  clearAfter,
+  createRun,
+  isPaneAlive,
+  readRun,
+  runDir,
+  writeRun,
+} from '../src/store.ts';
 import type { RunFile } from '../src/types.ts';
 
 let cwd: string;
@@ -86,5 +102,73 @@ describe('readRun', () => {
         'No run .. in .ui-compare. Recent runs, newest first: aaaaa1',
       ),
     );
+  });
+});
+
+describe('clearAfter', () => {
+  test('removes what after wrote, review.json and its strips included, and keeps Before', async () => {
+    const { dir } = await createRun(cwd);
+    await writeRun(dir, runFile('aaaaa1', '2026-11-01T10:00:01.000Z'));
+    for (const folder of ['before', 'unstable', 'after', 'diff', 'review']) {
+      await mkdir(join(dir, folder));
+      await writeFile(join(dir, folder, 'shot.png'), '');
+    }
+    for (const file of [
+      'summary.json',
+      'report.html',
+      'review.json',
+      'review.json.tmp',
+    ]) {
+      await writeFile(join(dir, file), '');
+    }
+
+    await clearAfter(dir);
+
+    expect((await readdir(dir)).toSorted()).toStrictEqual([
+      'before',
+      'run.json',
+      'unstable',
+    ]);
+  });
+});
+
+describe('isPaneAlive', () => {
+  const touch = async (secondsAgo: number) => {
+    await mkdir(join(cwd, '.ui-compare'), { recursive: true });
+    const file = join(cwd, '.ui-compare', 'pane-alive');
+    await writeFile(file, '');
+    const time = new Date(Date.now() - secondsAgo * 1000);
+    await utimes(file, time, time);
+  };
+
+  test('is true when the pane touched pane-alive within 15 seconds', async () => {
+    await touch(10);
+
+    await expect(isPaneAlive(cwd)).resolves.toBe(true);
+  });
+
+  test('is false when pane-alive was last touched more than 15 seconds ago', async () => {
+    await touch(16);
+
+    await expect(isPaneAlive(cwd)).resolves.toBe(false);
+  });
+
+  test('is false when pane-alive was touched more than 15 seconds in the future, as after a clock step back', async () => {
+    await touch(-60);
+
+    await expect(isPaneAlive(cwd)).resolves.toBe(false);
+  });
+
+  test('is false when pane-alive is a symlink, even to a fresh file', async () => {
+    await mkdir(join(cwd, '.ui-compare'), { recursive: true });
+    const target = join(cwd, 'fresh');
+    await writeFile(target, '');
+    await symlink(target, join(cwd, '.ui-compare', 'pane-alive'));
+
+    await expect(isPaneAlive(cwd)).resolves.toBe(false);
+  });
+
+  test('is false without pane-alive', async () => {
+    await expect(isPaneAlive(cwd)).resolves.toBe(false);
   });
 });

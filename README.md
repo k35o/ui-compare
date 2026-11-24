@@ -93,6 +93,8 @@ Each run lives in `.ui-compare/<id>/` under the current directory. The folder ca
 ├── after/         After shots (replaced by every `after`)
 ├── diff/          pixel diffs of changed shots
 ├── summary.json   per-shot status, changed areas and image paths
+├── review.json    the report's content for the Claude Code pane
+├── review/        its pictures, cut into strips
 └── report.html    the report, with its images embedded
 ```
 

@@ -1,7 +1,16 @@
 import { randomInt } from 'node:crypto';
-import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+  lstat,
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
+import type { ReviewFile } from '../plugin/hooks/review-file.ts';
 import { UsageError } from './errors.ts';
 import type { RunFile, Summary } from './types.ts';
 
@@ -12,11 +21,16 @@ export type Run = { id: string; dir: string };
 export const STORE_DIR = '.ui-compare';
 export const SUMMARY_FILE = 'summary.json';
 export const REPORT_FILE = 'report.html';
+export const REVIEW_FILE = 'review.json';
+export const REVIEW_DIR = 'review';
+export const PANE_ALIVE_FILE = 'pane-alive';
 
 const RUN_FILE = 'run.json';
+const REVIEW_TEMP_FILE = `${REVIEW_FILE}.tmp`;
 const ID_LENGTH = 6;
 const ID_PATTERN = /^[0-9a-z]{6}$/;
 const LISTED_RUNS = 5;
+const PANE_ALIVE_MS = 15_000;
 
 export function runDir(cwd: string, id: string): string {
   return join(cwd, STORE_DIR, id);
@@ -81,9 +95,15 @@ export async function readImage(dir: string, file: string): Promise<Buffer> {
 
 export async function clearAfter(dir: string): Promise<void> {
   await Promise.all(
-    ['after', 'diff', SUMMARY_FILE, REPORT_FILE].map((name) =>
-      rm(join(dir, name), { recursive: true, force: true }),
-    ),
+    [
+      'after',
+      'diff',
+      SUMMARY_FILE,
+      REPORT_FILE,
+      REVIEW_FILE,
+      REVIEW_TEMP_FILE,
+      REVIEW_DIR,
+    ].map((name) => rm(join(dir, name), { recursive: true, force: true })),
   );
 }
 
@@ -99,6 +119,29 @@ export async function writeSummary(
 
 export async function writeReport(dir: string, html: string): Promise<void> {
   await writeFile(join(dir, REPORT_FILE), html);
+}
+
+export async function writeReviewJson(
+  dir: string,
+  review: ReviewFile,
+): Promise<void> {
+  // Renamed into place so that the pane, which polls for review.json, never
+  // reads a partly written file.
+  const temp = join(dir, REVIEW_TEMP_FILE);
+  await writeFile(temp, `${JSON.stringify(review)}\n`);
+  await rename(temp, join(dir, REVIEW_FILE));
+}
+
+export async function isPaneAlive(cwd: string): Promise<boolean> {
+  try {
+    const alive = await lstat(join(cwd, STORE_DIR, PANE_ALIVE_FILE));
+    return (
+      alive.isFile() && Math.abs(Date.now() - alive.mtimeMs) < PANE_ALIVE_MS
+    );
+  } catch (error) {
+    if (errorCode(error) === 'ENOENT') return false;
+    throw error;
+  }
 }
 
 async function readRunFile(dir: string): Promise<RunFile | null> {

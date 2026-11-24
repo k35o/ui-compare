@@ -3,12 +3,14 @@ import type { Capturer } from './capture.ts';
 import { comparePngs } from './compare.ts';
 import { UsageError } from './errors.ts';
 import { renderReport } from './report.ts';
+import { writeReviewFile } from './review-file.ts';
 import { buildReview } from './review.ts';
 import type { Review, ShotImages } from './review.ts';
 import {
   clearAfter,
   createRun,
   imageFile,
+  isPaneAlive,
   readImage,
   readRun,
   writeImage,
@@ -60,7 +62,12 @@ export async function runAfter({
 }: {
   id: string;
   cwd: string;
-}): Promise<{ dir: string; summary: Summary; review: Review }> {
+}): Promise<{
+  dir: string;
+  summary: Summary;
+  review: Review;
+  report: 'file' | 'pane';
+}> {
   const { dir, run } = await readRun(cwd, id);
   const pairs = shotsWithBefore(run);
   await clearAfter(dir);
@@ -81,8 +88,10 @@ export async function runAfter({
   await writeSummary(dir, summary);
   const images = await readImages(dir, shots);
   const review = buildReview(summary, images);
+  await writeReviewFile(dir, review, images, summary);
+  if (await isPaneAlive(cwd)) return { dir, summary, review, report: 'pane' };
   await writeReport(dir, renderReport(review, images));
-  return { dir, summary, review };
+  return { dir, summary, review, report: 'file' };
 }
 
 export function shotsWithBefore(

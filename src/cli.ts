@@ -56,8 +56,8 @@ async function beforeCommand(
 
 async function afterCommand(id: string): Promise<number> {
   const cwd = process.cwd();
-  const { dir, summary, review } = await runAfter({ id, cwd });
-  print(formatAfter(summary, review, relative(cwd, dir), cwd));
+  const { dir, summary, review, report } = await runAfter({ id, cwd });
+  print(formatAfter(summary, review, report, relative(cwd, dir), cwd));
   return summary.counts.error > 0 ? 1 : 0;
 }
 
@@ -108,6 +108,7 @@ function formatBefore(run: RunFile, cwd: string): string[] {
 function formatAfter(
   summary: Summary,
   review: Review,
+  report: 'file' | 'pane',
   dir: string,
   cwd: string,
 ): string[] {
@@ -130,7 +131,9 @@ function formatAfter(
     ),
     ...review.unchanged.flatMap((entry) => row('unchanged', entry)),
     ...review.skipped.flatMap((entry) => row('skipped', entry, entry.reason)),
-    `Report:  ${join(dir, REPORT_FILE)}`,
+    report === 'pane'
+      ? 'Report:  shown in the ui-compare pane in Claude Code'
+      : `Report:  ${join(dir, REPORT_FILE)}`,
     `Summary: ${join(dir, SUMMARY_FILE)}`,
   ];
 }

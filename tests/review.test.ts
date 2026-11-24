@@ -741,6 +741,7 @@ describe('full page', () => {
       ],
       crops: [],
       fullPage: true,
+      marks: regions,
     });
   });
 
@@ -828,6 +829,7 @@ describe('page size', () => {
       ],
       crops: [],
       fullPage: true,
+      marks: [],
       dimensions: { before: [400, 300], after: [400, 340] },
     });
   });
@@ -901,6 +903,24 @@ describe('crops', () => {
         area: { x: 300, y: 300, width: 106, height: 40 },
         box: { x: 147, y: 240, width: 412, height: 160 },
       },
+    ]);
+  });
+
+  test('a cropped change marks the area of each crop on its page', () => {
+    const result = review(
+      [
+        changed(shot('0-home', HOME), [
+          { x: 300, y: 300, width: 14, height: 40 },
+          { x: 392, y: 300, width: 14, height: 40 },
+          { x: 50, y: 50, width: 10, height: 10 },
+        ]),
+      ],
+      { '0-home': [LARGE_PAGE, LARGE_PAGE] },
+    );
+
+    expect(onlyChange(result).marks).toStrictEqual([
+      { x: 50, y: 50, width: 10, height: 10 },
+      { x: 300, y: 300, width: 106, height: 40 },
     ]);
   });
 
