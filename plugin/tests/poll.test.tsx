@@ -2,6 +2,7 @@ import type { On, RenderSurface } from 'claude-code';
 import { expect, mock, test } from 'claude-code/testing';
 import type { Engine } from 'claude-code/testing';
 
+import type { ReviewFile } from '../hooks/review-file';
 import { PANE, PIXEL, REVIEW, RUN } from './fixture';
 
 type Entry = { kind: 'file' | 'dir' | 'other'; isLink: boolean };
@@ -16,7 +17,9 @@ type World = {
   language?: string;
   registerRefusal?: string;
   reviewVersion?: number;
+  reviews?: Record<string, Partial<ReviewFile>>;
   isStateLost?: boolean;
+  isOpenHanging?: boolean;
 };
 
 type Seen = {
@@ -76,17 +79,18 @@ function world(on: On, state: World): Seen {
     );
     return run === undefined ? stat(null) : stat(FILE, run.mtimeMs);
   });
-  on('fs.read', (_, e) =>
-    e.as === 'bytes'
-      ? { value: { base64: PIXEL } }
-      : {
-          value: JSON.stringify({
-            ...REVIEW,
-            id: e.path.split('/').at(-2),
-            version: state.reviewVersion ?? REVIEW.version,
-          }),
-        },
-  );
+  on('fs.read', (_, e) => {
+    if (e.as === 'bytes') return { value: { base64: PIXEL } };
+    const id = e.path.split('/').at(-2) ?? '';
+    return {
+      value: JSON.stringify({
+        ...REVIEW,
+        ...state.reviews?.[id],
+        id,
+        version: state.reviewVersion ?? REVIEW.version,
+      }),
+    };
+  });
   on('state.get', (_, e, next) =>
     state.isStateLost === true && e.key === 'since'
       ? { value: { value: undefined, version: 0 } }
@@ -94,6 +98,7 @@ function world(on: On, state: World): Seen {
   );
   on('ui.open', (_, e) => {
     seen.opens.push(e.id);
+    if (state.isOpenHanging === true) return new Promise(() => undefined);
     return {
       value:
         state.isPlaced === false
@@ -150,7 +155,7 @@ test('the session registers /ui-compare-pane', async ($, on) => {
   expect(seen.commands).toEqual(['ui-compare-pane']);
 });
 
-test('a review written during the session opens the pane', async ($, on) => {
+test('a review written during the session is shown without opening the pane by itself', async ($, on) => {
   const clock = mock.clock(on, { now: 1_000 });
   const state: World = { runs: [] };
   const seen = world(on, state);
@@ -160,20 +165,28 @@ test('a review written during the session opens the pane', async ($, on) => {
   state.runs = [{ id: RUN, mtimeMs: 2_500 }];
   await clock.advance(2_000);
 
-  expect(seen.opens).toEqual(['ui-compare']);
-  expect(seen.toasts).toEqual([]);
+  expect(seen.opens).toEqual([]);
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' });
+  expect(
+    (await ui.findAll({ type: 'Text' })).some(({ text }) =>
+      text.startsWith('Home, Button and Pricing page'),
+    ),
+  ).toBe(true);
+  await ui.unmount();
 });
 
-test('a review is opened once, not on every poll', async ($, on) => {
+test('polling goes on after a new review, writing pane-alive and opening nothing', async ($, on) => {
   const clock = mock.clock(on, { now: 1_000 });
   const seen = world(on, { runs: [{ id: RUN, mtimeMs: 2_500 }] });
   await start($);
 
   await clock.advance(2_000);
+  const writesAfterTheReview = seen.writes.length;
   await clock.advance(2_000);
   await clock.advance(2_000);
 
-  expect(seen.opens).toEqual(['ui-compare']);
+  expect(seen.writes.length).toBe(writesAfterTheReview + 2);
+  expect(seen.opens).toEqual([]);
 });
 
 test('the pane follows a newer review of another run, then a newer review of the same run', async ($, on) => {
@@ -182,73 +195,28 @@ test('the pane follows a newer review of another run, then a newer review of the
   const seen = world(on, state);
   await start($);
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' });
-  const header = async () =>
+  const headline = async () =>
     (await ui.findAll({ type: 'Text' }))
-      .map(({ text }) => text)
-      .filter((text) => text.startsWith('ui-compare · '));
+      .filter(({ props }) => props.size === 'title')
+      .map(({ text }) => text);
 
   await clock.advance(2_000);
-  expect(await header()).toEqual(['ui-compare · abc123']);
+  expect(await headline()).toEqual(['Home, Button and Pricing page changed']);
 
   state.runs = [...(state.runs ?? []), { id: 'def456', mtimeMs: 4_500 }];
+  state.reviews = { def456: { changed: REVIEW.changed.slice(1) } };
   await clock.advance(2_000);
-  expect(await header()).toEqual(['ui-compare · def456']);
+  expect(await headline()).toEqual(['Button and Pricing page changed']);
 
   state.runs = [
     { id: RUN, mtimeMs: 2_500 },
     { id: 'def456', mtimeMs: 6_500 },
   ];
+  state.reviews = { def456: { changed: REVIEW.changed.slice(2) } };
   await clock.advance(2_000);
-  expect(await header()).toEqual(['ui-compare · def456']);
-  expect(seen.opens).toEqual(['ui-compare', 'ui-compare', 'ui-compare']);
+  expect(await headline()).toEqual(['Pricing page changed']);
+  expect(seen.opens).toEqual([]);
   await ui.unmount();
-});
-
-test('a toast says how to open the pane when it could not be placed', async ($, on) => {
-  const clock = mock.clock(on, { now: 1_000 });
-  const seen = world(on, {
-    runs: [{ id: RUN, mtimeMs: 2_500 }],
-    isPlaced: false,
-  });
-  await start($);
-
-  await clock.advance(2_000);
-
-  expect(seen.toasts).toEqual([
-    'ui-compare: 3 screens changed. Open with /ui-compare-pane',
-  ]);
-});
-
-test('a toast says how to open the pane when another pane is in front of it', async ($, on) => {
-  const clock = mock.clock(on, { now: 1_000 });
-  const seen = world(on, {
-    runs: [{ id: RUN, mtimeMs: 2_500 }],
-    isShown: false,
-  });
-  await start($);
-
-  await clock.advance(2_000);
-
-  expect(seen.opens).toEqual(['ui-compare']);
-  expect(seen.toasts).toEqual([
-    'ui-compare: 3 screens changed. Open with /ui-compare-pane',
-  ]);
-});
-
-test('a toast names an unreadable review when the pane could not be placed', async ($, on) => {
-  const clock = mock.clock(on, { now: 1_000 });
-  const seen = world(on, {
-    runs: [{ id: RUN, mtimeMs: 2_500 }],
-    isPlaced: false,
-    reviewVersion: 2,
-  });
-  await start($);
-
-  await clock.advance(2_000);
-
-  expect(seen.toasts).toHaveLength(1);
-  expect(seen.toasts[0]).toContain('could not be read');
-  expect(seen.toasts[0]).toContain('/ui-compare-pane');
 });
 
 test('a review written before the session state was cleared is not opened unasked', async ($, on) => {
@@ -262,22 +230,6 @@ test('a review written before the session state was cleared is not opened unaske
   await clock.advance(2_000);
 
   expect(seen.opens).toEqual([]);
-});
-
-test('the toast is in Japanese when the language setting is Japanese', async ($, on) => {
-  const clock = mock.clock(on, { now: 1_000 });
-  const seen = world(on, {
-    runs: [{ id: RUN, mtimeMs: 2_500 }],
-    isPlaced: false,
-    language: '日本語',
-  });
-  await start($);
-
-  await clock.advance(2_000);
-
-  expect(seen.toasts).toEqual([
-    'ui-compare: 3 画面が変わりました。/ui-compare-pane で開けます',
-  ]);
 });
 
 test('runs that were there before the session started are not opened unasked', async ($, on) => {
@@ -302,35 +254,58 @@ test('a refused /ui-compare-pane leaves the polling and pane-alive running', asy
   await clock.advance(2_000);
 
   expect(seen.writes).toEqual([ALIVE]);
-  expect(seen.opens).toEqual(['ui-compare']);
+  expect(seen.opens).toEqual([]);
   expect(seen.logs).toEqual([
     expect.stringContaining('/ui-compare-pane is unavailable'),
   ]);
 });
 
-test('/ui-compare-pane opens the pane on the latest run, old or new', async ($, on) => {
+test('/ui-compare-pane opens the pane on the latest run, old or new, without naming it', async ($, on) => {
   const seen = world(on, {
     runs: [
       { id: 'old111', mtimeMs: 1_000 },
       { id: RUN, mtimeMs: 5_000 },
     ],
+    reviews: { old111: { changed: [] } },
   });
 
   const answer = await runCommand($);
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' });
+  const shown = (await ui.findAll({ type: 'Text' })).map(({ text }) => text);
 
-  expect(answer.text).toBe('Showing ui-compare run abc123 in the pane.');
+  expect(answer.text).toBe('Showing the latest ui-compare result in the pane.');
   expect(seen.opens).toEqual(['ui-compare']);
+  expect(shown).toContain('Home, Button and Pricing page changed');
+  await ui.unmount();
 });
 
-test('/ui-compare-pane without a run answers in text and opens nothing', async ($, on) => {
-  const seen = world(on, { runs: [] });
+test('/ui-compare-pane answers in Japanese when the language setting is Japanese', async ($, on) => {
+  world(on, { runs: [{ id: RUN, mtimeMs: 5_000 }], language: 'ja' });
 
   const answer = await runCommand($);
 
-  expect(answer.text).toBe(
-    'No ui-compare run has a review yet. Run ui-compare after <id> first.',
-  );
+  expect(answer.text).toBe('最新の ui-compare の結果をペインに表示しました。');
+});
+
+test('/ui-compare-pane without a run answers as the empty pane does and opens nothing', async ($, on) => {
+  const seen = world(on, { runs: [] });
+
+  const answer = await runCommand($);
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' });
+  const shown = (await ui.findAll({ type: 'Text' })).map(({ text }) => text);
+
+  expect(answer.text).toBe('No ui-compare result to show yet.');
+  expect(shown).toEqual([answer.text]);
   expect(seen.opens).toEqual([]);
+  await ui.unmount();
+});
+
+test('/ui-compare-pane without a run answers in Japanese as the empty pane does', async ($, on) => {
+  world(on, { runs: [], language: 'ja' });
+
+  const answer = await runCommand($);
+
+  expect(answer.text).toBe('表示できる ui-compare の結果はまだありません。');
 });
 
 test('folders that are not run ids are not runs', async ($, on) => {
@@ -338,9 +313,7 @@ test('folders that are not run ids are not runs', async ($, on) => {
 
   const answer = await runCommand($);
 
-  expect(answer.text).toBe(
-    'No ui-compare run has a review yet. Run ui-compare after <id> first.',
-  );
+  expect(answer.text).toBe('No ui-compare result to show yet.');
   expect(seen.opens).toEqual([]);
 });
 

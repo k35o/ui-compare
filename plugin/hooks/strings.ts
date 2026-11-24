@@ -1,143 +1,206 @@
 export type Lang = 'en' | 'ja';
 
+export type ViewportSize = { width: number; height?: number };
+
+type Pair = readonly [width: number, height: number];
+
 export type Strings = {
   before: string;
   after: string;
-  dark: string;
   storybook: string;
-  run: (id: string) => string;
-  changedHeadline: (count: number) => string;
-  failedHeadline: (count: number) => string;
+  changedHeadline: (names: readonly string[]) => string;
+  failedHeadline: (names: readonly string[]) => string;
   unchangedHeadline: string;
   emptyHeadline: string;
-  failedCount: (count: number) => string;
-  noiseCount: (count: number) => string;
-  unchangedCount: (count: number) => string;
-  skippedCount: (count: number) => string;
-  lead: (counts: string) => string;
-  list: (items: readonly string[]) => string;
+  counts: {
+    failed: (count: number) => string;
+    noise: (count: number) => string;
+    unchanged: (count: number) => string;
+    skipped: (count: number) => string;
+  };
+  lead: (counts: readonly string[], followsNames: boolean) => string;
+  date: (month: number, day: number) => string;
+  sizes: (sizes: readonly ViewportSize[]) => string;
+  darkMode: string;
+  lightAndDarkMode: string;
+  setting: (parts: readonly string[]) => string;
+  stories: (stories: readonly string[], setting: string) => string;
+  withScheme: (size: string, scheme: string) => string;
+  eachOf: (variants: readonly string[]) => string;
+  named: (label: string, target: string, kind: 'url' | 'component') => string;
   errorsHeading: string;
   phase: { before: string; after: string };
-  sameChange: string;
-  pageSize: (before: readonly number[], after: readonly number[]) => string;
+  failure: (phase: string, message: string) => string;
+  sameChange: (count: number) => string;
+  pageSize: (before: Pair, after: Pair) => string;
   warning: (message: string) => string;
   area: (index: number, count: number) => string;
   fullPage: string;
   viewFullPage: string;
-  hideFullPage: string;
-  showPage: string;
-  hidePage: string;
+  close: string;
   pageHint: string;
   othersHeading: string;
   noise: string;
-  noiseNote: string;
   unchanged: string;
-  skipped: string;
+  skipped: (reason: string | undefined) => string;
   unstable: string;
   notIntended: string;
   added: string;
   notAdded: string;
-  toast: (headline: string) => string;
+  openPane: string;
+  dismiss: string;
   noRun: string;
-  reviewProblem: {
-    unreadable: (id: string) => string;
-    version: (id: string) => string;
-  };
+  resultProblem: { unreadable: string; version: string };
   picturesOnDesktop: string;
   tooLarge: (path: string) => string;
   unreadable: (path: string) => string;
-  commandShown: (id: string) => string;
-  commandNoRun: string;
+  commandShown: string;
   alt: (kind: string, label: string, detail?: string) => string;
   draft: {
     intro: (id: string) => string;
-    screen: (label: string) => string;
-    conditions: (text: string) => string;
+    changed: (name: string) => string;
+    seenAt: (variants: string) => string;
     areas: (text: string) => string;
     noAreas: string;
-    pageSize: (text: string) => string;
     diff: (path: string) => string;
     after: (path: string) => string;
     ask: string;
   };
 };
 
-const screensEn = (count: number) =>
-  `${count} ${count === 1 ? 'screen' : 'screens'}`;
+const NAMES_SHOWN = 3;
 
-const listEn = (items: readonly string[]) => {
-  if (items.length <= 2) return items.join(' and ');
-  return `${items.slice(0, -1).join(', ')}, and ${items.at(-1)}`;
+const listEn = (items: readonly string[]) =>
+  items.length <= 2
+    ? items.join(' and ')
+    : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`;
+
+const listJa = (items: readonly string[]) =>
+  items.join(items.length <= 2 ? ' と ' : '、');
+
+const namesEn = (names: readonly string[]) =>
+  names.length <= NAMES_SHOWN
+    ? listEn(names)
+    : `${names.slice(0, NAMES_SHOWN).join(', ')} and ${names.length - NAMES_SHOWN} more`;
+
+const namesJa = (names: readonly string[]) => {
+  const quoted = names.slice(0, NAMES_SHOWN).map((name) => `「${name}」`);
+  if (names.length === 2) return quoted.join('と');
+  const rest = names.length - NAMES_SHOWN;
+  return rest > 0 ? `${quoted.join('')}ほか ${rest} 件` : quoted.join('');
 };
 
-const size = (dimensions: readonly number[]) => dimensions.join('×');
+const MONTHS = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+];
+
+const isWidthOnly = (sizes: readonly ViewportSize[]) =>
+  sizes.every(({ height }) => height === undefined);
+
+const dimensions = ({ width, height }: ViewportSize) => `${width}×${height}`;
 
 export const STRINGS: Record<Lang, Strings> = {
   en: {
     before: 'Before',
     after: 'After',
-    dark: 'dark',
     storybook: 'Storybook',
-    run: (id) => `ui-compare · ${id}`,
-    changedHeadline: (count) => `${screensEn(count)} changed`,
-    failedHeadline: (count) => `${screensEn(count)} could not be captured`,
-    unchangedHeadline: 'No screens changed',
-    emptyHeadline: 'No screens were captured',
-    failedCount: (count) => `${screensEn(count)} could not be captured`,
-    noiseCount: (count) =>
-      `${screensEn(count)} changed only where Before was unstable`,
-    unchangedCount: (count) => `${screensEn(count)} unchanged`,
-    skippedCount: (count) => `${screensEn(count)} skipped`,
-    lead: (counts) => `${counts}.`,
-    list: listEn,
-    errorsHeading: 'Could not capture',
+    changedHeadline: (names) => `${namesEn(names)} changed`,
+    failedHeadline: (names) => `${namesEn(names)} could not be captured`,
+    unchangedHeadline: 'Nothing looks different',
+    emptyHeadline: 'Nothing was captured',
+    counts: {
+      failed: (count) => `${count} not captured`,
+      noise: (count) =>
+        count === 1
+          ? '1 changed only where it changes on every load'
+          : `${count} changed only where they change on every load`,
+      unchanged: (count) => `${count} unchanged`,
+      skipped: (count) => `${count} left out`,
+    },
+    lead: (counts, followsNames) =>
+      `${followsNames ? 'Also ' : ''}${listEn(counts)}.`,
+    date: (month, day) => `${MONTHS[month - 1]} ${day}`,
+    sizes: (sizes) =>
+      isWidthOnly(sizes)
+        ? `${listEn(sizes.map(({ width }) => `${width}px`))} wide`
+        : listEn(
+            sizes.map((size) =>
+              size.height === undefined
+                ? `${size.width}px wide`
+                : dimensions(size),
+            ),
+          ),
+    darkMode: 'dark mode',
+    lightAndDarkMode: 'light and dark mode',
+    setting: (parts) => parts.join(', '),
+    stories: (stories, setting) => `${listEn(stories)} (${setting})`,
+    withScheme: (size, scheme) => `${size} (${scheme})`,
+    eachOf: listEn,
+    named: (label, target, kind) =>
+      kind === 'component'
+        ? `${label} (Storybook component ${target})`
+        : `${label} (${target})`,
+    errorsHeading: 'Not captured',
     phase: {
       before: 'Failed while capturing Before',
       after: 'Failed while capturing After',
     },
-    sameChange: 'The same change appears in each of these.',
-    pageSize: (before, after) => `Page size ${size(before)} → ${size(after)}`,
-    warning: (message) => `Warning: ${message}`,
-    area: (index, count) => `Area ${index} of ${count}`,
+    failure: (phase, message) => `${phase}: ${message}`,
+    sameChange: (count) =>
+      count === 2
+        ? 'Both changed the same way.'
+        : 'They all changed the same way.',
+    pageSize: ([beforeWidth, beforeHeight], [afterWidth, afterHeight]) =>
+      beforeWidth === afterWidth
+        ? `The page height changed from ${beforeHeight}px to ${afterHeight}px.`
+        : `The page size changed from ${beforeWidth}×${beforeHeight} to ${afterWidth}×${afterHeight}.`,
+    warning: (message) => `Note: ${message}`,
+    area: (index, count) => `Spot ${index} of ${count}`,
     fullPage: 'full page',
     viewFullPage: 'View full page',
-    hideFullPage: 'Hide full page',
-    showPage: 'Show page',
-    hidePage: 'Hide page',
-    pageHint: 'After. Point at it to see Before.',
-    othersHeading: 'Other results',
-    noise: 'Likely noise',
-    noiseNote:
-      'Changed only where the page already differed between two loads in Before.',
+    close: 'Close',
+    pageHint: 'This is After. Point at it to see Before.',
+    othersHeading: 'Others',
+    noise: 'Only parts that change on every load (like a clock) changed',
     unchanged: 'Unchanged',
-    skipped: 'Skipped',
-    unstable: 'Differences between the two Before loads',
+    skipped: (reason) =>
+      reason === undefined ? 'Left out' : `Left out: ${reason}`,
+    unstable: 'Difference between the two Before loads',
     notIntended: 'Not intended',
-    added: 'Added to your prompt',
-    notAdded: 'Could not add to your prompt',
-    toast: (headline) => `ui-compare: ${headline}. Open with /ui-compare-pane`,
-    noRun: 'No ui-compare run to show yet.',
-    reviewProblem: {
-      unreadable: (id) => `The review of run ${id} could not be read.`,
-      version: (id) =>
-        `The review of run ${id} could not be read: a different version of ui-compare wrote it. Update the ui-compare plugin or CLI so they match.`,
+    added: 'Added to your message. Send it to have it fixed.',
+    notAdded: 'Could not add it to your message.',
+    openPane: 'Open',
+    dismiss: 'Dismiss',
+    noRun: 'No ui-compare result to show yet.',
+    resultProblem: {
+      unreadable: 'Could not read the ui-compare result.',
+      version:
+        'Could not read the ui-compare result: a different version of ui-compare wrote it. Update the ui-compare plugin or CLI so they match.',
     },
     picturesOnDesktop: 'Pictures are shown in Claude Code Desktop.',
     tooLarge: (path) => `Too large to draw here: ${path}`,
     unreadable: (path) => `Could not read ${path}`,
-    commandShown: (id) => `Showing ui-compare run ${id} in the pane.`,
-    commandNoRun:
-      'No ui-compare run has a review yet. Run ui-compare after <id> first.',
+    commandShown: 'Showing the latest ui-compare result in the pane.',
     alt: (kind, label, detail) =>
       `${kind}: ${label}${detail ? `, ${detail}` : ''}`,
     draft: {
       intro: (id) => `ui-compare run ${id} shows a change I did not intend.`,
-      screen: (label) => `Screen: ${label}`,
-      conditions: (text) => `Conditions: ${text}`,
-      areas: (text) => `Changed areas (page coordinates): ${text}`,
-      noAreas: 'Changed areas: none, only the page size changed',
-      pageSize: (text) => `Page size: ${text}`,
-      diff: (path) => `Diff image: ${path}`,
+      changed: (name) => `What changed: ${name}`,
+      seenAt: (variants) => `Seen at: ${variants}`,
+      areas: (text) => `Changed spots (page coordinates): ${text}`,
+      noAreas: 'Changed spots: none, only the page size changed',
+      diff: (path) => `Image with the changed pixels in red: ${path}`,
       after: (path) => `After image: ${path}`,
       ask: 'Find what caused it and fix it.',
     },
@@ -145,66 +208,87 @@ export const STRINGS: Record<Lang, Strings> = {
   ja: {
     before: '変更前',
     after: '変更後',
-    dark: 'ダーク',
     storybook: 'Storybook',
-    run: (id) => `ui-compare · ${id}`,
-    changedHeadline: (count) => `${count} 画面が変わりました`,
-    failedHeadline: (count) => `${count} 画面を撮影できませんでした`,
-    unchangedHeadline: '変わった画面はありません',
-    emptyHeadline: '撮影した画面はありません',
-    failedCount: (count) => `撮影できなかった画面 ${count}`,
-    noiseCount: (count) =>
-      `変更前の時点で不安定だった箇所だけが変わった画面 ${count}`,
-    unchangedCount: (count) => `変わらなかった画面 ${count}`,
-    skippedCount: (count) => `スキップした画面 ${count}`,
-    lead: (counts) => counts,
-    list: (items) => items.join('、'),
-    errorsHeading: '撮影できなかった画面',
-    phase: { before: '変更前の撮影中に失敗', after: '変更後の撮影中に失敗' },
-    sameChange: 'どの条件でも同じ変化です。',
-    pageSize: (before, after) =>
-      `ページの大きさ ${size(before)} → ${size(after)}`,
-    warning: (message) => `警告：${message}`,
-    area: (index, count) => `変化した箇所 ${index}/${count}`,
+    changedHeadline: (names) => `${namesJa(names)}の見た目が変わりました`,
+    failedHeadline: (names) => `${namesJa(names)}を撮影できませんでした`,
+    unchangedHeadline: '見た目は変わっていません',
+    emptyHeadline: '撮影したものはありません',
+    counts: {
+      failed: (count) => `撮影できなかったもの ${count} 件`,
+      noise: (count) => `毎回変わる部分だけが変わったもの ${count} 件`,
+      unchanged: (count) => `変わらなかったもの ${count} 件`,
+      skipped: (count) => `撮影しなかったもの ${count} 件`,
+    },
+    lead: (counts, followsNames) =>
+      `${followsNames ? 'ほかに、' : ''}${counts.join('、')}があります`,
+    date: (month, day) => `${month}月${day}日`,
+    sizes: (sizes) =>
+      isWidthOnly(sizes)
+        ? `幅 ${listJa(sizes.map(({ width }) => `${width}px`))}`
+        : listJa(
+            sizes.map((size) =>
+              size.height === undefined
+                ? `幅 ${size.width}px`
+                : dimensions(size),
+            ),
+          ),
+    darkMode: 'ダークモード',
+    lightAndDarkMode: 'ライトモードとダークモード',
+    setting: (parts) => parts.join('、'),
+    stories: (stories, setting) => `${listJa(stories)}（${setting}）`,
+    withScheme: (size, scheme) => `${size}（${scheme}）`,
+    eachOf: (variants) => variants.join('、'),
+    named: (label, target, kind) =>
+      kind === 'component'
+        ? `「${label}」（Storybook のコンポーネント ${target}）`
+        : `「${label}」（${target}）`,
+    errorsHeading: '撮影できなかったもの',
+    phase: { before: '変更前の撮影で失敗', after: '変更後の撮影で失敗' },
+    failure: (phase, message) => `${phase}：${message}`,
+    sameChange: (count) =>
+      count === 2 ? 'どちらも同じ変わり方です' : 'どれも同じ変わり方です',
+    pageSize: ([beforeWidth, beforeHeight], [afterWidth, afterHeight]) =>
+      beforeWidth === afterWidth
+        ? `ページの高さが ${beforeHeight}px から ${afterHeight}px に変わりました`
+        : `ページの大きさが ${beforeWidth}×${beforeHeight} から ${afterWidth}×${afterHeight} に変わりました`,
+    warning: (message) => `注意：${message}`,
+    area: (index, count) => `${index} か所目（全 ${count} か所）`,
     fullPage: 'ページ全体',
     viewFullPage: 'ページ全体を見る',
-    hideFullPage: 'ページ全体を閉じる',
-    showPage: 'ページを見る',
-    hidePage: 'ページを閉じる',
-    pageHint: '変更後。ポインタを重ねると変更前を表示します。',
-    othersHeading: 'そのほかの結果',
-    noise: 'ノイズの可能性',
-    noiseNote:
-      '変更前に 2 回読み込んだ時点で既に差があった箇所だけが変わりました。',
-    unchanged: '変化なし',
-    skipped: 'スキップ',
-    unstable: '変更前の 2 回の読み込みの差',
+    close: '閉じる',
+    pageHint: '変更後のページです。ポインタを重ねると変更前に切り替わります',
+    othersHeading: 'そのほか',
+    noise: 'もともと毎回変わる部分（時計など）だけが変わりました',
+    unchanged: '変わっていません',
+    skipped: (reason) =>
+      reason === undefined
+        ? '撮影しませんでした'
+        : `撮影しませんでした：${reason}`,
+    unstable: '変更前に 2 回読み込んだときの違い',
     notIntended: '意図していない',
-    added: '入力欄に追加しました',
-    notAdded: '入力欄に追加できませんでした',
-    toast: (headline) => `ui-compare: ${headline}。/ui-compare-pane で開けます`,
+    added: '入力欄に書きました。送ると直してもらえます',
+    notAdded: '入力欄に書けませんでした',
+    openPane: '開く',
+    dismiss: '閉じる',
     noRun: '表示できる ui-compare の結果はまだありません。',
-    reviewProblem: {
-      unreadable: (id) => `実行 ${id} の結果を読み込めませんでした。`,
-      version: (id) =>
-        `実行 ${id} の結果を読み込めませんでした。別のバージョンの ui-compare が書いた結果です。ui-compare のプラグインか CLI を更新してバージョンを揃えてください。`,
+    resultProblem: {
+      unreadable: 'ui-compare の結果を読み込めませんでした。',
+      version:
+        'ui-compare の結果を読み込めませんでした。別のバージョンの ui-compare が書いた結果です。ui-compare のプラグインか CLI を更新してバージョンを揃えてください。',
     },
     picturesOnDesktop: '画像は Claude Code Desktop で表示します。',
     tooLarge: (path) => `大きすぎて表示できません：${path}`,
     unreadable: (path) => `読み込めませんでした：${path}`,
-    commandShown: (id) => `ui-compare の結果 ${id} をペインに表示しました。`,
-    commandNoRun:
-      'ui-compare の結果はまだありません。先に ui-compare after <id> を実行してください。',
+    commandShown: '最新の ui-compare の結果をペインに表示しました。',
     alt: (kind, label, detail) =>
-      `${kind}：${label}${detail ? `（${detail}）` : ''}`,
+      `${kind}：${label}${detail ? `、${detail}` : ''}`,
     draft: {
       intro: (id) => `ui-compare の実行 ${id} に意図していない変化があります。`,
-      screen: (label) => `画面：${label}`,
-      conditions: (text) => `条件：${text}`,
-      areas: (text) => `変化した箇所（ページ座標）：${text}`,
-      noAreas: '変化した箇所：なし（ページの大きさだけが変わりました）',
-      pageSize: (text) => `ページの大きさ：${text}`,
-      diff: (path) => `差分画像：${path}`,
+      changed: (name) => `変わったもの：${name}`,
+      seenAt: (variants) => `表示：${variants}`,
+      areas: (text) => `変わった場所（ページ上の座標）：${text}`,
+      noAreas: '変わった場所：なし（ページの大きさだけが変わりました）',
+      diff: (path) => `変わったピクセルを赤で示した画像：${path}`,
       after: (path) => `変更後の画像：${path}`,
       ask: '原因を調べて直してください。',
     },

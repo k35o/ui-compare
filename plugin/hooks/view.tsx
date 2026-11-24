@@ -6,7 +6,6 @@ import type {
   ReviewCrop,
   ReviewError,
   ReviewFile,
-  ReviewLine,
   ReviewPage,
   ReviewScreen,
   StripImage,
@@ -14,12 +13,15 @@ import type {
 import type { Strings } from './strings';
 import {
   changeKey,
-  conditions,
-  formatTime,
-  lineKey,
+  changeNotes,
+  otherNote,
+  others,
   overview,
   runPath,
+  timesLine,
+  variantsText,
 } from './summary';
+import type { Other } from './summary';
 import { frameOf, stripDrawings } from './svg';
 import type { Size } from './svg';
 
@@ -40,12 +42,6 @@ export type PaneView = {
   ) => Promise<unknown>;
 };
 
-type Other = {
-  key: string;
-  kind: 'noise' | 'unchanged' | 'skipped';
-  entry: ReviewLine;
-};
-
 const KIND_COLORS = {
   noise: 'warning',
   unchanged: 'success',
@@ -54,16 +50,6 @@ const KIND_COLORS = {
 
 export function pageKey(key: string): string {
   return `page:${key}`;
-}
-
-function others(review: ReviewFile): Other[] {
-  return (['noise', 'unchanged', 'skipped'] as const).flatMap((kind) =>
-    review[kind].map((entry, index) => ({
-      key: lineKey(kind, index),
-      kind,
-      entry,
-    })),
-  );
 }
 
 function hasPicture(page: ReviewPage | undefined): page is ReviewPage {
@@ -121,17 +107,9 @@ export function headerOf(
   const { headline, lead } = overview(review, t);
   return (
     <Box flexDirection="column" gap="xs">
-      <Box flexDirection="row" flexWrap="wrap" columnGap="md">
-        <Text dimColor mono size="footnote">
-          {t.run(review.id)}
-        </Text>
-        <Text dimColor size="footnote">
-          {t.before} {formatTime(review.beforeAt)}
-        </Text>
-        <Text dimColor size="footnote">
-          {t.after} {formatTime(review.afterAt, review.beforeAt)}
-        </Text>
-      </Box>
+      <Text dimColor size="footnote" tabular>
+        {timesLine(review, t)}
+      </Text>
       <Text size="title" weight="bold">
         {headline}
       </Text>
@@ -180,9 +158,14 @@ function errorBlock(
       borderColor="error"
       padding="sm"
     >
-      <Text weight="bold">{entry.screen.label}</Text>
+      <Box flexDirection="row" flexWrap="wrap" columnGap="sm">
+        <Text weight="bold">{entry.screen.label}</Text>
+        <Text dimColor size="footnote">
+          {variantsText(entry.variants, t)}
+        </Text>
+      </Box>
       <Text color="error" size="footnote">
-        {conditions(entry.variants, t)} · {t.phase[entry.phase]}
+        {t.phase[entry.phase]}
       </Text>
       <Text mono size="footnote">
         {entry.message}
@@ -227,31 +210,24 @@ function changeBlock(
 ): RenderElement {
   const { Box, Button, Text } = els;
   const { t } = view;
-  const warnings = [
-    ...new Set(change.variants.flatMap((variant) => variant.warnings)),
-  ];
   const isPageOpen = view.open.has(pageKey(key));
   const { label } = screen.screen;
   return (
     <Box flexDirection="column" gap="sm">
       <Text weight="bold" tabular>
-        {conditions(change.variants, t)}
+        {variantsText(change.variants, t)}
       </Text>
-      {change.dimensions !== undefined && (
-        <Text dimColor size="footnote">
-          {t.pageSize(change.dimensions.before, change.dimensions.after)}
-        </Text>
+      {changeNotes(change, t).map(({ text, isWarning }) =>
+        isWarning ? (
+          <Text color="warning" size="footnote">
+            {text}
+          </Text>
+        ) : (
+          <Text dimColor size="footnote">
+            {text}
+          </Text>
+        ),
       )}
-      {change.variants.length > 1 && (
-        <Text dimColor size="footnote">
-          {t.sameChange}
-        </Text>
-      )}
-      {warnings.map((warning) => (
-        <Text color="warning" size="footnote">
-          {t.warning(warning)}
-        </Text>
-      ))}
       {change.fullPage
         ? pageView(els, view, change.page, label, key)
         : change.crops.map((crop, index, all) =>
@@ -267,7 +243,7 @@ function changeBlock(
         {!change.fullPage && (
           <Button
             key={pageKey(key)}
-            label={isPageOpen ? t.hideFullPage : t.viewFullPage}
+            label={isPageOpen ? t.close : t.viewFullPage}
             onPress={() => view.toggle(pageKey(key))}
           />
         )}
@@ -457,36 +433,25 @@ function otherLine(els: Desktop, view: PaneView, line: Other): RenderElement {
   const { t } = view;
   const { entry, key, kind } = line;
   const { page } = entry;
-  const note =
-    kind === 'noise'
-      ? t.noiseNote
-      : kind === 'skipped'
-        ? entry.reason
-        : undefined;
   const isOpen = view.open.has(pageKey(key));
   return (
     <Box flexDirection="column" gap="xs">
       <Box flexDirection="row" flexWrap="wrap" gap="sm" alignItems="center">
-        <Text size="caption" color={KIND_COLORS[kind]}>
-          {t[kind]}
-        </Text>
         <Text weight="medium">{entry.screen.label}</Text>
         <Text dimColor size="footnote">
-          {conditions(entry.variants, t)}
+          {variantsText(entry.variants, t)}
         </Text>
         {hasPicture(page) && (
           <Button
             key={pageKey(key)}
-            label={isOpen ? t.hidePage : t.showPage}
+            label={isOpen ? t.close : t.viewFullPage}
             onPress={() => view.toggle(pageKey(key))}
           />
         )}
       </Box>
-      {note !== undefined && (
-        <Text dimColor size="footnote">
-          {note}
-        </Text>
-      )}
+      <Text size="footnote" color={KIND_COLORS[kind]}>
+        {otherNote(line, t)}
+      </Text>
       {isOpen &&
         hasPicture(page) &&
         pageView(els, view, page, entry.screen.label, key)}

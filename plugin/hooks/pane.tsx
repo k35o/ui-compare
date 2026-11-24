@@ -17,6 +17,9 @@ const view = atom(
   { run: null, open: [], drafted: [] },
   { shape: 'view-1' },
 );
+const notice = atom({ plugin: 'ui-compare', key: 'notice' } as const, null, {
+  shape: 'notice-1',
+});
 const since = atom({ plugin: 'ui-compare', key: 'since' } as const, 0);
 
 const isReal = (stat: FsStat, kind: FsStat['kind']) =>
@@ -31,6 +34,22 @@ const showing = (run: UiCompareRun) => (current: UiCompareView) =>
 let loaded:
   | { key: string; review: ReviewFile; strips: Map<string, string> }
   | undefined;
+
+async function reviewOf(
+  run: UiCompareRun,
+  readText: (path: string) => Promise<string>,
+): Promise<
+  | { review: ReviewFile; strips: Map<string, string> }
+  | { problem: 'unreadable' | 'version' }
+> {
+  const key = `${run.id}@${run.mtimeMs}`;
+  if (loaded?.key === key) return loaded;
+  const text = await readText(runPath(run.id, REVIEW_FILE)).catch(() => '');
+  const parsed = parseReview(text, run.id);
+  if ('problem' in parsed) return parsed;
+  loaded = { key, review: parsed.review, strips: new Map() };
+  return loaded;
+}
 
 export const register: Register = (on) => {
   on('session.start', async ($, e, next) => {
@@ -75,25 +94,12 @@ export const register: Register = (on) => {
       )
         return;
 
+      // A new result only raises the line above the prompt. An open the person
+      // did not ask for never settles while the desktop cannot draw the pane
+      // (its sidebar closed), and every later call of the plugin waits behind
+      // it, the heartbeat included.
       await update($, view, showing(newest));
-      const opened = await $.ui.open({ id: PANE, title: PANE });
-      if (
-        opened.isPlaced &&
-        (await $.ui.panes()).some(({ id, isShown }) => id === PANE && isShown)
-      )
-        return;
-      const t = STRINGS[languageOf(await $.settings.read({ key: 'language' }))];
-      const parsed = parseReview(
-        await $.fs.read(runPath(newest.id, REVIEW_FILE)),
-        newest.id,
-      );
-      $.ui.toast(
-        t.toast(
-          'review' in parsed
-            ? overview(parsed.review, t).headline
-            : t.reviewProblem[parsed.problem](newest.id).replace(/[.。]$/u, ''),
-        ),
-      );
+      await update($, notice, () => newest);
     };
     $.clock.every(POLL_MS, () => {
       if (isPolling) return;
@@ -112,7 +118,7 @@ export const register: Register = (on) => {
     await $.command
       .register({
         name: 'ui-compare-pane',
-        description: 'Show the latest ui-compare run in a pane',
+        description: 'Show the latest ui-compare result in a pane',
       })
       .catch((error: unknown) => {
         $.ui.log(
@@ -128,10 +134,44 @@ export const register: Register = (on) => {
       list: (path) => $.fs.list(path),
       stat: (path) => $.fs.stat(path),
     });
-    if (newest === undefined) return { text: t.commandNoRun };
+    if (newest === undefined) return { text: t.noRun };
     await update($, view, showing(newest));
-    await $.ui.open({ id: PANE, title: PANE });
-    return { text: t.commandShown(newest.id) };
+    await update($, notice, () => null);
+    void $.ui.open({ id: PANE, title: PANE }).catch(() => undefined);
+    return { text: t.commandShown };
+  });
+
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    const shown = await read($, notice);
+    if (shown === null || e.props.hasSurvey) return next(e);
+    const t = STRINGS[languageOf(await $.settings.read({ key: 'language' }))];
+    const result = await reviewOf(shown, (path) => $.fs.read(path));
+    const { Box, Button, Text } = $.ui.resolve(e);
+    return (
+      <Box gap={1}>
+        <Text>
+          {'review' in result
+            ? overview(result.review, t).headline
+            : t.resultProblem[result.problem]}
+        </Text>
+        <Button
+          key="open"
+          label={t.openPane}
+          variant="primary"
+          onPress={async () => {
+            await update($, view, showing(shown));
+            await update($, notice, () => null);
+            void $.ui.open({ id: PANE, title: PANE }).catch(() => undefined);
+          }}
+        />
+        <Button
+          key="dismiss"
+          label={t.dismiss}
+          role="dismiss"
+          onPress={() => update($, notice, () => null)}
+        />
+      </Box>
+    );
   });
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -140,17 +180,10 @@ export const register: Register = (on) => {
     const { Box, Text } = $.ui.resolve(e);
     if (run === null) return <Text dimColor>{t.noRun}</Text>;
 
-    const key = `${run.id}@${run.mtimeMs}`;
-    if (loaded?.key !== key) {
-      const text = await $.fs
-        .read(runPath(run.id, REVIEW_FILE))
-        .catch(() => '');
-      const parsed = parseReview(text, run.id);
-      if ('problem' in parsed)
-        return <Text dimColor>{t.reviewProblem[parsed.problem](run.id)}</Text>;
-      loaded = { key, review: parsed.review, strips: new Map() };
-    }
-    const { review, strips } = loaded;
+    const result = await reviewOf(run, (path) => $.fs.read(path));
+    if ('problem' in result)
+      return <Text dimColor>{t.resultProblem[result.problem]}</Text>;
+    const { review, strips } = result;
 
     if (e.surface !== 'desktop') {
       return plainPane({ Box, Text }, [

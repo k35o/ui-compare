@@ -10,6 +10,7 @@ declare module 'claude-code' {
   interface PluginState {
     'ui-compare': {
       view: Shaped<UiCompareView>;
+      notice: Shaped<UiCompareRun | null>;
       since: number;
     };
   }

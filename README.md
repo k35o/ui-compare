@@ -138,7 +138,7 @@ The page is in Japanese when the browser language is Japanese, and in English ot
 
 With the plugin installed, Claude Code Desktop shows the report in a pane beside the conversation instead of writing `report.html`:
 
-- The pane opens by itself whenever an `after` run finishes. When the window is too narrow to fit it, or another pane is in front, a notice appears instead; open the pane with `/ui-compare-pane`.
+- Whenever an `after` run finishes, a line above the prompt says what changed, with **Open** and **Dismiss**. **Open**, or `/ui-compare-pane`, shows the result in the pane, however narrow the window. The pane never opens by itself: Claude Code cannot always draw it then, for example while the sidebar is closed.
 - It holds what the report holds, top to bottom. Each changed area is cropped with Before above After. **View full page** shows the After page with the changed areas outlined; point at it to see Before.
 - **Not intended** on a change adds a note about that change to your prompt, with its name, its full URL or component title, and its image paths. Add your own words and send it to have the agent fix it.
 - The pane follows Claude Code's `language` setting: Japanese when it is Japanese, English otherwise.

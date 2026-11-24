@@ -10,6 +10,13 @@ export const PIXEL =
 
 export const RUN = 'abc123';
 
+export const localTime = (
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+): string => new Date(2026, month - 1, day, hour, minute).toISOString();
+
 export const PANE = {
   plugin: 'ui-compare',
   component: 'Pane',
@@ -38,10 +45,11 @@ export const image = (
   return { width, height: y, strips };
 };
 
-const url = (label: string): ReviewScreenRef => ({
-  key: `url:${label}`,
+const url = (label: string, path: string): ReviewScreenRef => ({
+  key: `url:http://localhost:5173${path}`,
   kind: 'url',
   label,
+  target: `http://localhost:5173${path}`,
 });
 
 const light: ReviewVariant = {
@@ -54,19 +62,19 @@ const light: ReviewVariant = {
 export const REVIEW: ReviewFile = {
   version: 1,
   id: RUN,
-  beforeAt: '2026-11-24T10:00:00.000Z',
-  afterAt: '2026-11-24T10:05:00.000Z',
+  beforeAt: localTime(11, 24, 10, 2),
+  afterAt: localTime(11, 24, 10, 15),
   errors: [
     {
-      screen: url('http://localhost:5173/broken'),
-      variants: [{ ...light, shotKey: 'broken' }],
+      screen: url('Checkout', '/checkout'),
+      variants: [{ ...light, shotKey: 'checkout' }],
       phase: 'after',
       message: 'net::ERR_CONNECTION_REFUSED',
     },
   ],
   changed: [
     {
-      screen: url('http://localhost:5173/'),
+      screen: url('Home', '/'),
       changes: [
         {
           variants: [light],
@@ -92,7 +100,8 @@ export const REVIEW: ReviewFile = {
       screen: {
         key: 'component:Components/Button',
         kind: 'component',
-        label: 'Components/Button',
+        label: 'Button',
+        target: 'Components/Button',
       },
       changes: [
         {
@@ -135,7 +144,7 @@ export const REVIEW: ReviewFile = {
       ],
     },
     {
-      screen: url('http://localhost:5173/pricing'),
+      screen: url('Pricing page', '/pricing'),
       changes: [
         {
           variants: [{ ...light, shotKey: 'pricing' }],
@@ -154,7 +163,7 @@ export const REVIEW: ReviewFile = {
   ],
   noise: [
     {
-      screen: url('http://localhost:5173/clock'),
+      screen: url('Clock', '/clock'),
       variants: [{ ...light, shotKey: 'clock' }],
       page: {
         before: image('clock-before', 1280, [720]),
@@ -166,7 +175,7 @@ export const REVIEW: ReviewFile = {
   ],
   unchanged: [
     {
-      screen: url('http://localhost:5173/about'),
+      screen: url('About', '/about'),
       variants: [{ ...light, shotKey: 'about' }],
       page: {
         before: image('about-before', 1280, [720]),
@@ -177,7 +186,7 @@ export const REVIEW: ReviewFile = {
   ],
   skipped: [
     {
-      screen: url('http://localhost:5173/admin'),
+      screen: url('Admin', '/admin'),
       variants: [{ ...light, shotKey: 'admin' }],
       reason: 'Redirected to a login page',
     },

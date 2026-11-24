@@ -96,6 +96,7 @@ const isScreen = shape({
   key: isString,
   kind: oneOf('url', 'component'),
   label: isString,
+  target: isString,
 });
 
 const isVariant = shape({
