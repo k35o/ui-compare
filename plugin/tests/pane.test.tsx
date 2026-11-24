@@ -122,6 +122,41 @@ test('the header names what changed and counts the rest', async ($, on) => {
   await ui.unmount();
 });
 
+test('the close button closes the pane, also in its small form', async ($, on) => {
+  world(on);
+  const closed: string[] = [];
+  on('ui.close', (_, e) => {
+    closed.push(e.id);
+    return { value: undefined };
+  });
+  await showLatestRun($);
+
+  for (const placement of ['dock', 'widget'] as const) {
+    const ui = await $.ui.mount({
+      ...PANE,
+      surface: 'desktop',
+      props: { ...PANE.props, placement },
+    });
+    const close = await ui.find({ key: 'close' });
+    expect(close?.props.role).toBe('dismiss');
+    expect(close?.text).toBe('Close');
+    await ui.press({ key: 'close' });
+    await ui.unmount();
+  }
+
+  expect(closed).toEqual(['ui-compare', 'ui-compare']);
+});
+
+test('the empty pane has a close button too', async ($, on) => {
+  world(on, { text: '{}' });
+  await showLatestRun($);
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' });
+
+  expect((await ui.find({ key: 'close' }))?.props.role).toBe('dismiss');
+  await ui.unmount();
+});
+
 test('the header gives the capture times without the run id', async ($, on) => {
   world(on);
   await showLatestRun($);

@@ -35,6 +35,7 @@ export type PaneView = {
   drafted: ReadonlySet<string>;
   base64Of: (file: string) => string | undefined;
   toggle: (key: string) => Promise<unknown>;
+  close: () => void;
   draft: (
     screen: ReviewScreen,
     change: ReviewChange,
@@ -118,13 +119,31 @@ export function headerOf(
   );
 }
 
+export function paneHeader(
+  els: Desktop,
+  { review, t, close }: Pick<PaneView, 'review' | 't' | 'close'>,
+): RenderElement {
+  const { Box, Button } = els;
+  return (
+    <Box
+      flexDirection="row"
+      justifyContent="space-between"
+      alignItems="flex-start"
+      gap="sm"
+    >
+      {headerOf(els, review, t)}
+      <Button key="close" label={t.close} role="dismiss" onPress={close} />
+    </Box>
+  );
+}
+
 export function desktopPane(els: Desktop, view: PaneView): RenderElement {
   const { Box, Text } = els;
   const { review, t } = view;
   const lines = others(review);
   return (
     <Box flexDirection="column" gap="lg">
-      {headerOf(els, review, t)}
+      {paneHeader(els, view)}
       {review.errors.length > 0 && (
         <Box flexDirection="column" gap="sm">
           <Text size="heading" weight="bold" color="error">

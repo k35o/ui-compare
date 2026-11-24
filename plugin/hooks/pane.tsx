@@ -6,7 +6,7 @@ import type { ReviewFile } from './review-file';
 import { newestRun, parseReview, REVIEW_FILE } from './runs';
 import { languageOf, STRINGS } from './strings';
 import { draftText, overview, runPath, STORE, summaryLines } from './summary';
-import { desktopPane, headerOf, plainPane, shownFiles } from './view';
+import { desktopPane, paneHeader, plainPane, shownFiles } from './view';
 
 const PANE = 'ui-compare';
 const POLL_MS = 2000;
@@ -177,12 +177,20 @@ export const register: Register = (on) => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const t = STRINGS[languageOf(await $.settings.read({ key: 'language' }))];
     const { run, open, drafted } = await read($, view);
-    const { Box, Text } = $.ui.resolve(e);
-    if (run === null) return <Text dimColor>{t.noRun}</Text>;
+    const { Box, Button, Text } = $.ui.resolve(e);
+    const close = () => {
+      void $.ui.close({ id: PANE }).catch(() => undefined);
+    };
+    const message = (text: string) => (
+      <Box flexDirection="row" justifyContent="space-between" gap="sm">
+        <Text dimColor>{text}</Text>
+        <Button key="close" label={t.close} role="dismiss" onPress={close} />
+      </Box>
+    );
+    if (run === null) return message(t.noRun);
 
     const result = await reviewOf(run, (path) => $.fs.read(path));
-    if ('problem' in result)
-      return <Text dimColor>{t.resultProblem[result.problem]}</Text>;
+    if ('problem' in result) return message(t.resultProblem[result.problem]);
     const { review, strips } = result;
 
     if (e.surface !== 'desktop') {
@@ -193,7 +201,8 @@ export const register: Register = (on) => {
       ]);
     }
     const elements = $.ui.resolve(e);
-    if (e.props.placement === 'widget') return headerOf(elements, review, t);
+    if (e.props.placement === 'widget')
+      return paneHeader(elements, { review, t, close });
 
     const openKeys = new Set(open);
     const missing = shownFiles(review, openKeys).filter(
@@ -209,6 +218,7 @@ export const register: Register = (on) => {
     );
 
     return desktopPane(elements, {
+      close,
       review,
       t,
       open: openKeys,
