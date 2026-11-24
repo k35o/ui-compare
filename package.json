@@ -41,7 +41,7 @@
     "check:write": "vp check --fix",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "pnpm build",
-    "skill:validate": "skills-ref validate skills/ui-compare"
+    "skill:validate": "skills-ref validate plugin/skills/ui-compare"
   },
   "dependencies": {
     "cac": "7.1.0",

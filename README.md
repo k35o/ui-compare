@@ -13,7 +13,7 @@ pnpm exec playwright install chromium
 
 Or run it without installing: `npx ui-compare ...`.
 
-To let a coding agent drive it, install the bundled [agent skill](skills/ui-compare/SKILL.md):
+To let a coding agent drive it, install the bundled [agent skill](plugin/skills/ui-compare/SKILL.md):
 
 ```sh
 gh skill install k35o/ui-compare
@@ -128,7 +128,7 @@ pnpm check            # fmt + lint
 pnpm typecheck
 pnpm test
 pnpm build            # vp pack -> dist/
-pnpm skill:validate   # validate skills/ui-compare against agentskills.io
+pnpm skill:validate   # validate plugin/skills/ui-compare against agentskills.io
 ```
 
 ## Release
