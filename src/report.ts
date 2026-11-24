@@ -23,7 +23,6 @@ const STYLE = String.raw`
     --danger-bg: light-dark(#fef6f5, #2a1816);
     --danger-line: light-dark(#f1b5ae, #7a2f28);
     --warn-ink: light-dark(#8a4b08, #f5c76b);
-    --warn-soft: light-dark(#fdf3e1, #33280f);
     --shadow: light-dark(rgb(25 35 45 / 0.06), rgb(0 0 0 / 0.32));
     /* The outline sits on screenshots, not on the theme, so it keeps one
        color that stands out from typical page content in either scheme. */
@@ -66,14 +65,7 @@ const STYLE = String.raw`
   }
 
   .hero { display: grid; gap: 8px; margin-bottom: 8px; }
-  .eyebrow {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 2px 18px;
-    color: var(--muted);
-    font-size: 13px;
-  }
-  .run { font-family: var(--mono); font-size: 12px; }
+  .eyebrow { color: var(--muted); font-size: 13px; }
   .hero h1 {
     font-size: 26px;
     font-weight: 700;
@@ -285,21 +277,11 @@ const STYLE = String.raw`
   .line > summary::before { margin-top: 0.62em; }
   .line-static { padding-left: 31px; }
   .line-text { min-width: 0; overflow-wrap: anywhere; }
-  .kind {
-    margin-right: 2px;
-    padding: 1px 8px;
-    border-radius: 6px;
-    background: var(--well);
-    color: var(--muted);
-    font-size: 12px;
-    font-weight: 450;
-    white-space: nowrap;
-  }
-  .kind.noise { background: var(--warn-soft); color: var(--warn-ink); }
-  .kind.unchanged { background: var(--accent-soft); color: var(--accent-soft-ink); }
   .line-label { font-weight: 450; }
   .line-detail { color: var(--muted); font-size: 13px; }
-  .line-note { display: block; color: var(--muted); font-size: 13px; }
+  .line-status { display: block; color: var(--muted); font-size: 13px; }
+  .line-status.noise { color: var(--warn-ink); }
+  .line-status.unchanged { color: var(--accent-soft-ink); }
   .line-body { display: grid; gap: 16px; padding: 6px 12px 18px 31px; }
 
   @media (hover: hover) {
@@ -324,79 +306,113 @@ const STYLE = String.raw`
 
 const SCRIPT = String.raw`
 (() => {
-  const screensEn = (count) => count + (count === 1 ? ' screen' : ' screens');
+  const andList = (items) =>
+    items.length < 2 ? items.join('') : items.slice(0, -1).join(', ') + ' and ' + items.at(-1);
+  const jaList = (items) => items.join(items.length === 2 ? ' と ' : '、');
+  const size = ([width, height]) => width + '×' + height;
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const STRINGS = {
     en: {
       before: 'Before',
       after: 'After',
       diff: 'Diff',
-      dark: 'dark',
       storybook: 'Storybook',
-      changedHeadline: (count) => screensEn(count) + ' changed',
-      failedHeadline: (count) => screensEn(count) + ' could not be captured',
-      unchangedHeadline: 'No screens changed',
-      emptyHeadline: 'No screens were captured',
-      failedCount: (count) => screensEn(count) + ' could not be captured',
-      noiseCount: (count) => screensEn(count) + ' changed only where Before was unstable',
-      unchangedCount: (count) => screensEn(count) + ' unchanged',
-      skippedCount: (count) => screensEn(count) + ' skipped',
-      lead: (counts) => counts + '.',
-      errorsHeading: 'Could not capture',
+      list: andList,
+      each: andList,
+      comma: ', ',
+      names: (labels) =>
+        labels.length > 3 ? labels.slice(0, 3).join(', ') + ' and ' + (labels.length - 3) + ' more' : andList(labels),
+      changedHeadline: (names) => names + ' changed',
+      failedHeadline: (names) => names + ' could not be captured',
+      unchangedHeadline: 'Nothing looks different',
+      emptyHeadline: 'Nothing was captured',
+      failedCount: (count) => count + ' not captured',
+      noiseCount: (count) =>
+        count === 1
+          ? '1 changed only where it changes on every load'
+          : count + ' changed only where they change on every load',
+      unchangedCount: (count) => count + ' unchanged',
+      skippedCount: (count) => count + ' left out',
+      lead: (parts, followsNames) => (followsNames ? 'Also ' : '') + andList(parts) + '.',
+      date: (month, day) => MONTHS[month - 1] + ' ' + day,
+      widths: (widths) => andList(widths) + ' wide',
+      darkMode: 'dark mode',
+      bothModes: 'light and dark mode',
+      qualified: (subject, detail) => subject + ' (' + detail + ')',
+      errorsHeading: 'Not captured',
       phase: { before: 'Failed while capturing Before', after: 'Failed while capturing After' },
-      sameChange: 'The same change appears in each of these.',
-      pageSize: ({ before, after }) => 'Page size ' + before.join('×') + ' → ' + after.join('×'),
-      warning: (message) => 'Warning: ' + message,
-      area: (index, count) => 'Area ' + index + ' of ' + count,
+      sameChange: (count) => (count === 2 ? 'Both changed the same way.' : 'They all changed the same way.'),
+      pageSize: (before, after) =>
+        before[0] === after[0]
+          ? 'The page height changed from ' + before[1] + 'px to ' + after[1] + 'px.'
+          : 'The page size changed from ' + size(before) + ' to ' + size(after) + '.',
+      warning: (message) => 'Note: ' + message,
+      area: (index, count) => 'Spot ' + index + ' of ' + count,
       fullPage: 'full page',
       viewFullPage: 'View full page',
+      close: 'Close',
       views: 'View',
       sideBySide: 'Side by side',
       slider: 'Slider',
       divider: 'Divider position',
       diffCaption: 'Diff: changed pixels in red',
-      othersHeading: 'Other results',
-      noise: 'Likely noise',
-      noiseNote: 'Changed only where the page already differed between two loads in Before.',
+      othersHeading: 'Others',
+      noise: 'Only parts that change on every load (like a clock) changed',
       unchanged: 'Unchanged',
-      skipped: 'Skipped',
-      unstable: 'Differences between the two Before loads',
+      skipped: (reason) => 'Left out: ' + reason,
+      unstable: 'Difference between the two Before loads',
       alt: (kind, label, detail) => kind + ': ' + label + (detail ? ', ' + detail : ''),
     },
     ja: {
       before: '変更前',
       after: '変更後',
       diff: '差分',
-      dark: 'ダーク',
       storybook: 'Storybook',
-      changedHeadline: (count) => count + ' 画面が変わりました',
-      failedHeadline: (count) => count + ' 画面を撮影できませんでした',
-      unchangedHeadline: '変わった画面はありません',
-      emptyHeadline: '撮影した画面はありません',
-      failedCount: (count) => '撮影できなかった画面 ' + count,
-      noiseCount: (count) => '変更前の時点で不安定だった箇所だけが変わった画面 ' + count,
-      unchangedCount: (count) => '変わらなかった画面 ' + count,
-      skippedCount: (count) => 'スキップした画面 ' + count,
-      lead: (counts) => counts,
-      errorsHeading: '撮影できなかった画面',
-      phase: { before: '変更前の撮影中に失敗', after: '変更後の撮影中に失敗' },
-      sameChange: 'どの条件でも同じ変化です。',
-      pageSize: ({ before, after }) => 'ページの大きさ ' + before.join('×') + ' → ' + after.join('×'),
-      warning: (message) => '警告：' + message,
-      area: (index, count) => '変化した箇所 ' + index + '/' + count,
+      list: jaList,
+      each: (items) => items.join('、'),
+      comma: '、',
+      names: (labels) => {
+        const quoted = labels.map((label) => '「' + label + '」');
+        if (quoted.length === 2) return quoted.join('と');
+        return quoted.slice(0, 3).join('') + (quoted.length > 3 ? 'ほか ' + (quoted.length - 3) + ' 件' : '');
+      },
+      changedHeadline: (names) => names + 'の見た目が変わりました',
+      failedHeadline: (names) => names + 'を撮影できませんでした',
+      unchangedHeadline: '見た目は変わっていません',
+      emptyHeadline: '撮影したものはありません',
+      failedCount: (count) => '撮影できなかったもの ' + count + ' 件',
+      noiseCount: (count) => '毎回変わる部分だけが変わったもの ' + count + ' 件',
+      unchangedCount: (count) => '変わらなかったもの ' + count + ' 件',
+      skippedCount: (count) => '撮影しなかったもの ' + count + ' 件',
+      lead: (parts, followsNames) => (followsNames ? 'ほかに、' : '') + parts.join('、') + 'があります',
+      date: (month, day) => month + '月' + day + '日',
+      widths: (widths) => '幅 ' + jaList(widths),
+      darkMode: 'ダークモード',
+      bothModes: 'ライトモードとダークモード',
+      qualified: (subject, detail) => subject + '（' + detail + '）',
+      errorsHeading: '撮影できなかったもの',
+      phase: { before: '変更前の撮影で失敗', after: '変更後の撮影で失敗' },
+      sameChange: (count) => (count === 2 ? 'どちらも同じ変わり方です' : 'どれも同じ変わり方です'),
+      pageSize: (before, after) =>
+        before[0] === after[0]
+          ? 'ページの高さが ' + before[1] + 'px から ' + after[1] + 'px に変わりました'
+          : 'ページの大きさが ' + size(before) + ' から ' + size(after) + ' に変わりました',
+      warning: (message) => '注意：' + message,
+      area: (index, count) => index + ' か所目（全 ' + count + ' か所）',
       fullPage: 'ページ全体',
       viewFullPage: 'ページ全体を見る',
+      close: '閉じる',
       views: '表示方法',
       sideBySide: '並べて表示',
       slider: 'スライダー',
       divider: '境界の位置',
       diffCaption: '差分（変わったピクセルを赤で表示）',
-      othersHeading: 'そのほかの結果',
-      noise: 'ノイズの可能性',
-      noiseNote: '変更前に 2 回読み込んだ時点で既に差があった箇所だけが変わりました。',
-      unchanged: '変化なし',
-      skipped: 'スキップ',
-      unstable: '変更前の 2 回の読み込みの差',
-      alt: (kind, label, detail) => kind + '：' + label + (detail ? '（' + detail + '）' : ''),
+      othersHeading: 'そのほか',
+      noise: 'もともと毎回変わる部分（時計など）だけが変わりました',
+      unchanged: '変わっていません',
+      skipped: (reason) => '撮影しませんでした：' + reason,
+      unstable: '変更前に 2 回読み込んだときの違い',
+      alt: (kind, label, detail) => kind + '：' + label + (detail ? '、' + detail : ''),
     },
   };
 
@@ -408,8 +424,6 @@ const SCRIPT = String.raw`
   const t = STRINGS[lang];
   document.documentElement.lang = lang;
 
-  const listFormat = new Intl.ListFormat(lang, { type: 'conjunction' });
-  const list = (items) => listFormat.format(items);
   const unique = (values) => [...new Set(values)];
 
   const el = (tag, className, ...children) => {
@@ -419,19 +433,42 @@ const SCRIPT = String.raw`
     return element;
   };
 
-  const setting = (variant) =>
-    variant.viewport.width + '×' + variant.viewport.height +
-    (variant.colorScheme === 'dark' ? ' ' + t.dark : '');
+  const sizes = (viewports, all) => {
+    const tall = (viewport) =>
+      all.some((other) => other.width === viewport.width && other.height !== viewport.height);
+    if (!viewports.some(tall)) return t.widths(viewports.map((viewport) => viewport.width + 'px'));
+    return t.list(
+      viewports.map((viewport) =>
+        tall(viewport) ? size([viewport.width, viewport.height]) : t.widths([viewport.width + 'px']),
+      ),
+    );
+  };
 
-  // Variants that cover every story at every setting read best as two short
-  // lists; any other mix has to name each variant on its own.
+  const mode = (schemes) =>
+    schemes.includes('dark') ? (schemes.includes('light') ? t.bothModes : t.darkMode) : null;
+
+  // Variants that cover every story at every viewport and color scheme read
+  // best as short lists; any other mix has to name each variant on its own.
   const conditions = (variants) => {
     const stories = unique(variants.flatMap((variant) => (variant.story === undefined ? [] : [variant.story])));
-    const settings = unique(variants.map(setting));
-    if (variants.length === Math.max(stories.length, 1) * settings.length) {
-      return [list(stories), list(settings)].filter(Boolean).join(' · ');
+    const viewports = [
+      ...new Map(variants.map(({ viewport }) => [size([viewport.width, viewport.height]), viewport])).values(),
+    ];
+    const schemes = unique(variants.map((variant) => variant.colorScheme));
+    if (variants.length === Math.max(stories.length, 1) * viewports.length * schemes.length) {
+      const settings = [sizes(viewports, viewports), mode(schemes)].filter(Boolean).join(t.comma);
+      return stories.length === 0 ? settings : t.qualified(t.list(stories), settings);
     }
-    return list(variants.map((variant) => [variant.story, setting(variant)].filter(Boolean).join(' · ')));
+    return t.each(
+      variants.map((variant) => {
+        const shown = sizes([variant.viewport], viewports);
+        const scheme = mode([variant.colorScheme]);
+        if (variant.story !== undefined) {
+          return t.qualified(variant.story, [shown, scheme].filter(Boolean).join(t.comma));
+        }
+        return scheme === null ? shown : t.qualified(shown, scheme);
+      }),
+    );
   };
 
   const imagesOf = (variant) =>
@@ -587,6 +624,10 @@ const SCRIPT = String.raw`
             return el('div', 'area', el('p', 'area-label', area), cropPair(crop, area));
           }),
         );
+    const full = disclosure('full', [t.viewFullPage], () => fullPage(set, screen.label));
+    full.addEventListener('toggle', () => {
+      full.firstChild.textContent = full.open ? t.close : t.viewFullPage;
+    });
     return el(
       'div',
       'change',
@@ -594,12 +635,12 @@ const SCRIPT = String.raw`
         'div',
         'change-head',
         el('h3', '', conditions(change.variants)),
-        change.dimensions ? el('p', 'note', t.pageSize(change.dimensions)) : null,
-        change.variants.length > 1 ? el('p', 'note', t.sameChange) : null,
+        change.dimensions ? el('p', 'note', t.pageSize(change.dimensions.before, change.dimensions.after)) : null,
+        change.variants.length > 1 ? el('p', 'note', t.sameChange(change.variants.length)) : null,
         warnings.length > 0 ? el('ul', 'warnings', ...warnings.map((warning) => el('li', '', t.warning(warning)))) : null,
       ),
       crops,
-      disclosure('full', [t.viewFullPage], () => fullPage(set, screen.label)),
+      full,
     );
   };
 
@@ -632,18 +673,16 @@ const SCRIPT = String.raw`
       el('p', 'message', entry.message),
     );
 
-  const line = (kind, name, entry, note) => {
+  const line = (kind, status, entry) => {
     const set = imagesOf(entry.variants[0]);
     const text = el(
       'span',
       'line-text',
-      el('span', 'kind ' + kind, name),
-      ' ',
       el('span', 'line-label', entry.screen.label),
       ' ',
       el('span', 'line-detail', conditions(entry.variants)),
-      note ? ' ' : null,
-      note ? el('span', 'line-note', note) : null,
+      ' ',
+      el('span', 'line-status ' + kind, status),
     );
     if (!set.before && !set.after && !set.unstable) return el('li', '', el('div', 'line-static', text));
     return el(
@@ -653,48 +692,49 @@ const SCRIPT = String.raw`
     );
   };
 
-  const formatTime = (iso, reference) => {
+  const dateOf = (iso) => {
     const date = new Date(iso);
-    const element = el('time', '');
+    return Number.isNaN(date.getTime()) ? null : date;
+  };
+  const beforeDate = dateOf(review.beforeAt);
+  const afterDate = dateOf(review.afterAt);
+  const sameDay = beforeDate && afterDate && beforeDate.toDateString() === afterDate.toDateString();
+  const clock = (date) => date.getHours() + ':' + String(date.getMinutes()).padStart(2, '0');
+  const time = (iso, date) => {
+    const text =
+      date === null ? iso : sameDay ? clock(date) : t.date(date.getMonth() + 1, date.getDate()) + ' ' + clock(date);
+    const element = el('time', '', text);
     element.dateTime = iso;
-    if (Number.isNaN(date.getTime())) {
-      element.textContent = iso;
-    } else {
-      const sameDay = reference && reference.toDateString() === date.toDateString();
-      element.textContent = new Intl.DateTimeFormat(
-        locale,
-        sameDay ? { timeStyle: 'short' } : { dateStyle: 'medium', timeStyle: 'short' },
-      ).format(date);
-    }
     return element;
   };
 
-  const screensOf = (entries) => unique(entries.map((entry) => entry.screen.key));
-  const errorScreens = screensOf(review.errors).length;
-  const changedScreens = review.changed.length;
-  // A screen with a card or an error is counted there, even when some of its
-  // settings also land among the other results.
-  const counted = new Set(screensOf([...review.changed, ...review.errors]));
-  const othersOf = (entries) => screensOf(entries).filter((key) => !counted.has(key)).length;
-  const noiseScreens = othersOf(review.noise);
-  const unchangedScreens = othersOf(review.unchanged);
-  const skippedScreens = othersOf(review.skipped);
-  const total = counted.size + noiseScreens + unchangedScreens + skippedScreens;
+  const screensOf = (entries) => [...new Map(entries.map(({ screen }) => [screen.key, screen])).values()];
+  const counted = new Set();
+  const countOnce = (entries) => {
+    const fresh = screensOf(entries).filter((screen) => !counted.has(screen.key));
+    for (const screen of fresh) counted.add(screen.key);
+    return fresh;
+  };
+  const changed = countOnce(review.changed);
+  const failed = countOnce(review.errors);
+  const noiseCount = countOnce(review.noise).length;
+  const unchangedCount = countOnce(review.unchanged).length;
+  const skippedCount = countOnce(review.skipped).length;
+  const labels = (screens) => t.names(screens.map((screen) => screen.label));
   const headline =
-    changedScreens > 0
-      ? t.changedHeadline(changedScreens)
-      : errorScreens > 0
-        ? t.failedHeadline(errorScreens)
-        : total === 0
-          ? t.emptyHeadline
-          : t.unchangedHeadline;
+    changed.length > 0
+      ? t.changedHeadline(labels(changed))
+      : failed.length > 0
+        ? t.failedHeadline(labels(failed))
+        : noiseCount + unchangedCount > 0
+          ? t.unchangedHeadline
+          : t.emptyHeadline;
   const counts = [
-    changedScreens > 0 && errorScreens > 0 ? t.failedCount(errorScreens) : null,
-    noiseScreens > 0 ? t.noiseCount(noiseScreens) : null,
-    unchangedScreens > 0 ? t.unchangedCount(unchangedScreens) : null,
-    skippedScreens > 0 ? t.skippedCount(skippedScreens) : null,
+    changed.length > 0 && failed.length > 0 ? t.failedCount(failed.length) : null,
+    noiseCount > 0 ? t.noiseCount(noiseCount) : null,
+    unchangedCount > 0 ? t.unchangedCount(unchangedCount) : null,
+    skippedCount > 0 ? t.skippedCount(skippedCount) : null,
   ].filter(Boolean);
-  const beforeDate = new Date(review.beforeAt);
 
   const hero = el(
     'header',
@@ -702,18 +742,19 @@ const SCRIPT = String.raw`
     el(
       'p',
       'eyebrow',
-      el('span', 'run', 'ui-compare · ' + review.id),
-      el('span', '', t.before + ' ', formatTime(review.beforeAt)),
-      el('span', '', t.after + ' ', formatTime(review.afterAt, Number.isNaN(beforeDate.getTime()) ? null : beforeDate)),
+      t.before + ' ',
+      time(review.beforeAt, beforeDate),
+      ' · ' + t.after + ' ',
+      time(review.afterAt, afterDate),
     ),
     el('h1', '', headline),
-    counts.length > 0 ? el('p', 'lead', t.lead(list(counts))) : null,
+    counts.length > 0 ? el('p', 'lead', t.lead(counts, changed.length + failed.length > 0)) : null,
   );
 
   const lines = [
-    ...review.noise.map((entry) => line('noise', t.noise, entry, t.noiseNote)),
-    ...review.unchanged.map((entry) => line('unchanged', t.unchanged, entry, null)),
-    ...review.skipped.map((entry) => line('skipped', t.skipped, entry, entry.reason)),
+    ...review.noise.map((entry) => line('noise', t.noise, entry)),
+    ...review.unchanged.map((entry) => line('unchanged', t.unchanged, entry)),
+    ...review.skipped.map((entry) => line('skipped', t.skipped(entry.reason), entry)),
   ];
 
   document.getElementById('report').replaceChildren(

@@ -4,7 +4,7 @@ export type Viewport = { width: number; height: number };
 
 export type Box = { x: number; y: number; width: number; height: number };
 
-export type UrlTarget = { kind: 'url'; url: string };
+export type UrlTarget = { kind: 'url'; url: string; label?: string };
 
 export type StoryTarget = {
   kind: 'story';
@@ -13,6 +13,7 @@ export type StoryTarget = {
   title: string;
   name: string;
   importPath: string;
+  label?: string;
 };
 
 export type Target = UrlTarget | StoryTarget;
@@ -25,7 +26,7 @@ export type Shot = {
 };
 
 export type CaptureOutcome =
-  | { status: 'captured'; png: Buffer; warnings: string[] }
+  | { status: 'captured'; png: Buffer; warnings: string[]; title?: string }
   | { status: 'skipped'; reason: string }
   | { status: 'error'; message: string };
 
@@ -36,7 +37,13 @@ export type Unstable = {
 };
 
 export type BeforeShot =
-  | { key: string; status: 'captured'; warnings: string[]; unstable?: Unstable }
+  | {
+      key: string;
+      status: 'captured';
+      warnings: string[];
+      title?: string;
+      unstable?: Unstable;
+    }
   | { key: string; status: 'skipped'; reason: string }
   | { key: string; status: 'error'; message: string };
 

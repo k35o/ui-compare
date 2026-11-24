@@ -27,6 +27,8 @@ type StoryEntry = {
   importPath: string;
 };
 
+type Named = { label?: string; value: string };
+
 const DEFAULT_VIEWPORT = '1280x720';
 const DEFAULT_COLOR_SCHEME = 'light';
 const MAX_VIEWPORT_SIDE = 10_000;
@@ -61,8 +63,9 @@ export async function resolveShots(
   ];
 
   const targets: Target[] = [];
-  for (const value of input.targets) {
-    targets.push(await resolveTarget(value, input.cwd));
+  for (const { label, value } of input.targets.map(parseNamed)) {
+    const target = await resolveTarget(value, input.cwd);
+    targets.push(label === undefined ? target : { ...target, label });
   }
   if (input.storybook !== undefined) {
     const index = await loadStoryIndex(
@@ -105,30 +108,47 @@ export function selectStories(
 ): StoryTarget[] {
   const stories = storyEntries(index);
   const base = storybookBase(storybookUrl);
-  for (const pattern of patterns) {
-    if (!stories.some((story) => matchesStory(story, pattern))) {
+  const named = patterns.map(parseNamed);
+  const labels = new Map<string, string>();
+  for (const { label, value: pattern } of named) {
+    const matched = stories.filter((story) => matchesStory(story, pattern));
+    if (matched.length === 0) {
       throw new UsageError(
         `No story matches ${pattern}. Pass a story id or a glob over story files, such as src/**/*.stories.tsx`,
       );
     }
+    if (label === undefined) continue;
+    const titles = [...new Set(matched.map((story) => story.title))];
+    if (titles.length > 1) {
+      throw new UsageError(
+        `--story ${label}=${pattern} matches stories of ${titles.length} components (${titles.join(', ')}). Name one component per pattern, or drop the name`,
+      );
+    }
+    const [title = ''] = titles;
+    if (!labels.has(title)) labels.set(title, label);
   }
   return stories
     .filter(
       (story) =>
-        patterns.length === 0 ||
-        patterns.some((pattern) => matchesStory(story, pattern)),
+        named.length === 0 ||
+        named.some(({ value }) => matchesStory(story, value)),
     )
-    .map((story) => ({
-      kind: 'story',
-      url: new URL(
-        `iframe.html?id=${encodeURIComponent(story.id)}&viewMode=story`,
-        base,
-      ).href,
-      storyId: story.id,
-      title: story.title,
-      name: story.name,
-      importPath: story.importPath,
-    }));
+    .map((story) => {
+      const target: StoryTarget = {
+        kind: 'story',
+        url: new URL(
+          `iframe.html?id=${encodeURIComponent(story.id)}&viewMode=story`,
+          base,
+        ).href,
+        storyId: story.id,
+        title: story.title,
+        name: story.name,
+        importPath: story.importPath,
+      };
+      const label = labels.get(story.title);
+      if (label !== undefined) target.label = label;
+      return target;
+    });
 }
 
 export function shotKey(
@@ -143,6 +163,15 @@ export function shotKey(
     `${viewport.width}x${viewport.height}`,
     colorScheme,
   ].join('-');
+}
+
+function parseNamed(value: string): Named {
+  const at = value.indexOf('=');
+  const label = value.slice(0, at).trim();
+  const target = value.slice(at + 1).trim();
+  return at === -1 || label === '' || label.includes('://') || target === ''
+    ? { value }
+    : { label, value: target };
 }
 
 async function resolveTarget(value: string, cwd: string): Promise<Target> {

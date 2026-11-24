@@ -1,8 +1,10 @@
 import { PNG } from 'pngjs';
 
 import type {
+  BeforeShot,
   Box,
   ColorScheme,
+  Shot,
   ShotDiff,
   ShotResult,
   Summary,
@@ -20,6 +22,7 @@ export type Screen = {
   key: string;
   kind: 'url' | 'component';
   label: string;
+  target: string;
 };
 
 export type Variant = {
@@ -75,7 +78,11 @@ const CROP_MIN_WIDTH = 320;
 const CROP_MIN_HEIGHT = 160;
 const FULL_PAGE_AREAS = 5;
 
-export function buildReview(summary: Summary, images: ShotImages): Review {
+export function buildReview(
+  summary: Summary,
+  images: ShotImages,
+  screens: Map<string, Screen>,
+): Review {
   const errors = new Map<string, ErrorEntry>();
   const changed = new Map<string, ChangedScreen>();
   const noise = new Map<string, ListEntry>();
@@ -84,7 +91,7 @@ export function buildReview(summary: Summary, images: ShotImages): Review {
 
   for (const result of summary.shots) {
     const { key } = result.shot;
-    const screen = screenOf(result.shot.target);
+    const screen = required(screens.get(key), `Shot ${key} has no screen`);
     const variant = variantOf(result);
     switch (result.status) {
       case 'error': {
@@ -148,14 +155,173 @@ function required<T>(value: T | undefined, message: string): T {
   return value;
 }
 
-export function screenOf(target: Target): Screen {
+/**
+ * The screen of each shot, by shot key. A screen is labelled with the name
+ * given to its target at `before`; else a page with the title it had in
+ * Before, unless another unnamed page had the same title, and then with its
+ * path; and a component with the last segment of its title. An unnamed screen
+ * whose label is also another screen's is then told apart: a web page by its
+ * host, path and query, or its whole URL without the scheme when that is
+ * not enough; a file by as many of its last path segments as set it apart;
+ * and a component by its full title.
+ */
+export function screensOf(
+  shots: Shot[],
+  before: BeforeShot[],
+): Map<string, Screen> {
+  const beforeByKey = new Map(before.map((shot) => [shot.key, shot]));
+  const titles = new Map<string, string>();
+  for (const { key, target } of shots) {
+    const shot = beforeByKey.get(key);
+    if (
+      target.kind === 'url' &&
+      target.label === undefined &&
+      shot?.status === 'captured' &&
+      shot.title !== undefined &&
+      !titles.has(target.url)
+    ) {
+      titles.set(target.url, shot.title);
+    }
+  }
+  const pages = new Map<string, number>();
+  for (const title of titles.values()) {
+    pages.set(title, (pages.get(title) ?? 0) + 1);
+  }
+  const labelOf = (target: Target): string => {
+    if (target.label !== undefined) return target.label;
+    if (target.kind === 'story') return lastSegment(target.title);
+    const title = titles.get(target.url);
+    return title !== undefined && pages.get(title) === 1
+      ? title
+      : pathOf(target.url);
+  };
+  const targets = new Map<string, Target>();
+  for (const { target } of shots) {
+    const key = screenKey(target);
+    if (!targets.has(key)) targets.set(key, target);
+  }
+  const labels = toldApart(
+    [...targets].map(([key, target]) => ({
+      key,
+      target,
+      label: labelOf(target),
+    })),
+  );
+  return new Map(
+    shots.map(({ key, target }) => [
+      key,
+      screenOf(
+        target,
+        required(labels.get(screenKey(target)), `Shot ${key} has no label`),
+      ),
+    ]),
+  );
+}
+
+function screenKey(target: Target): string {
   return target.kind === 'url'
-    ? { key: `url:${target.url}`, kind: 'url', label: target.url }
-    : {
-        key: `component:${target.title}`,
-        kind: 'component',
-        label: target.title,
-      };
+    ? `url:${target.url}`
+    : `component:${target.title}`;
+}
+
+function screenOf(target: Target, label: string): Screen {
+  return {
+    key: screenKey(target),
+    kind: target.kind === 'url' ? 'url' : 'component',
+    label,
+    target: target.kind === 'url' ? target.url : target.title,
+  };
+}
+
+type Labelled = { key: string; target: Target; label: string };
+
+type Located = { key: string; url: URL };
+
+function toldApart(screens: Labelled[]): Map<string, string> {
+  const labels = new Map(screens.map(({ key, label }) => [key, label]));
+  const byLabel = new Map<string, Labelled[]>();
+  for (const screen of screens) {
+    byLabel.set(screen.label, [...(byLabel.get(screen.label) ?? []), screen]);
+  }
+  for (const [label, group] of byLabel) {
+    if (group.length < 2) continue;
+    const web: Located[] = [];
+    const files: Located[] = [];
+    for (const { key, target } of group) {
+      if (target.label !== undefined) continue;
+      if (target.kind === 'story') {
+        labels.set(key, target.title);
+        continue;
+      }
+      const url = new URL(target.url);
+      (url.protocol === 'file:' ? files : web).push({ key, url });
+    }
+    for (const [key, text] of [
+      ...webLabels(web, label),
+      ...fileLabels(files, label),
+    ]) {
+      labels.set(key, text);
+    }
+  }
+  return labels;
+}
+
+function webLabels(pages: Located[], taken: string): Array<[string, string]> {
+  const short = (url: URL) =>
+    decoded(url.host + (url.pathname === '/' ? '' : url.pathname) + url.search);
+  return pages.map(({ key, url }) => {
+    const text = short(url);
+    const shared =
+      text === taken ||
+      pages.some((other) => other.key !== key && short(other.url) === text);
+    return [
+      key,
+      shared ? decoded(url.href.slice(`${url.protocol}//`.length)) : text,
+    ];
+  });
+}
+
+function fileLabels(files: Located[], taken: string): Array<[string, string]> {
+  const paths = files.map(({ key, url }) => ({
+    key,
+    segments: url.pathname.split('/').slice(1),
+  }));
+  const tail = (segments: string[], count: number) =>
+    decoded(segments.slice(-count).join('/'));
+  return paths.map(({ key, segments }) => {
+    const sharedAt = (count: number) => {
+      const text = tail(segments, count);
+      return (
+        text === taken ||
+        paths.some(
+          (other) => other.key !== key && tail(other.segments, count) === text,
+        )
+      );
+    };
+    let count = 1;
+    while (count < segments.length && sharedAt(count)) count++;
+    return [key, tail(segments, count)];
+  });
+}
+
+function lastSegment(title: string): string {
+  return title.slice(title.lastIndexOf('/') + 1).trim() || title;
+}
+
+function pathOf(href: string): string {
+  const url = new URL(href);
+  if (url.protocol === 'file:') {
+    return decoded(url.pathname.slice(url.pathname.lastIndexOf('/') + 1));
+  }
+  return decoded((url.pathname === '/' ? url.host : url.pathname) + url.search);
+}
+
+function decoded(text: string): string {
+  try {
+    return decodeURI(text);
+  } catch {
+    return text;
+  }
 }
 
 function variantOf({ shot, warnings }: ShotResult): Variant {

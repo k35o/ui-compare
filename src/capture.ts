@@ -245,7 +245,13 @@ async function capturePage(
   await checkPageHealth(page, failedScripts, warnings);
   if (!settled)
     warnings.push('The page did not settle; captured the last frame');
-  return { status: 'captured', png, warnings: [...warnings, ...pageErrors] };
+  const title = target.kind === 'url' ? (await page.title()).trim() : '';
+  return {
+    status: 'captured',
+    png,
+    warnings: [...warnings, ...pageErrors],
+    ...(title === '' ? {} : { title }),
+  };
 }
 
 function startDeadline(timeoutMs: number): {

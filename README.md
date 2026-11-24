@@ -2,7 +2,7 @@
 
 Capture pages and Storybook stories before and after a UI change, and compare them in one HTML report.
 
-`ui-compare` is built for changes made by coding agents: the agent captures Before, edits the code, captures After, and hands you a one-page report that shows, screen by screen, each changed area in Before and After side by side. It runs on your machine against the dev server or Storybook you already have running. Nothing is committed, and there is no baseline to maintain.
+`ui-compare` is built for changes made by coding agents: the agent captures Before, edits the code, captures After, and hands you a one-page report that names what changed in your words and shows each changed spot in Before and After side by side. It runs on your machine against the dev server or Storybook you already have running. Nothing is committed, and there is no baseline to maintain.
 
 ## Install
 
@@ -30,11 +30,11 @@ In the Claude Code Desktop app, click + next to the prompt box, then Plugins, Ad
 ## Usage
 
 ```sh
-# 1. Before editing: capture the targets and note the run id
-ui-compare before http://localhost:5173/ http://localhost:5173/settings --viewport 1280x720 --viewport 375x812
+# 1. Before editing: capture the named targets and note the run id
+ui-compare before "Home=http://localhost:5173/" "Settings page=http://localhost:5173/settings" --viewport 1280x720 --viewport 375x812
 # Captured Before for run 3k9x2a: 2 screens, 4 shots
-#   ok        http://localhost:5173/  1280x720, 375x812
-#   ok        http://localhost:5173/settings  1280x720, 375x812
+#   ok        Home  1280x720, 375x812
+#   ok        Settings page  1280x720, 375x812
 # Next: make the change, then run: ui-compare after 3k9x2a
 
 # 2. Change the code
@@ -42,36 +42,51 @@ ui-compare before http://localhost:5173/ http://localhost:5173/settings --viewpo
 # 3. Capture again and compare (repeat after every round of edits)
 ui-compare after 3k9x2a
 # Compared run 3k9x2a: 1 screen changed, 0 errors
-#   changed    http://localhost:5173/
+#   changed    Home
 #     1280x720, 375x812: 1 area at x=555 y=243 170x42 (in 1280x720)  .ui-compare/3k9x2a/diff/001-localhost-5173-1280x720-light.png
-#   unchanged  http://localhost:5173/settings  1280x720, 375x812
+#   unchanged  Settings page  1280x720, 375x812
 # Report:  .ui-compare/3k9x2a/report.html
 # Summary: .ui-compare/3k9x2a/summary.json
 ```
 
 `after` always compares with the Before of its run, so the report covers the whole change, however many times you run it.
 
-The output is grouped by screen: a page, or a Storybook component with all its stories. Each line under a changed screen is one change: where it was seen, its areas (three at most, then a count of the rest) and a diff image. A change with five or more areas, or areas that cover more than half of the page, reads `changed across the page` instead. A change seen at several viewports, color schemes or stories is listed once with all of them; its areas and diff image are those of the one named in parentheses, such as `(in 1280x720)` or `(in Primary · 1280x720)`, because the same change can sit at other coordinates at another viewport. When the page grew or shrank, the line also gives both page sizes, such as `page size 1280x720 -> 1280x1600`. Errors come first; `noise`, `unchanged` and `skipped` screens get one line each at the end. The color scheme is named only when it is `dark`.
+The output is grouped by screen: a page, or a Storybook component with all its stories, listed under its [name](#names). Each line under a changed screen is one change: where it was seen, its areas (three at most, then a count of the rest) and a diff image. A change with five or more areas, or areas that cover more than half of the page, reads `changed across the page` instead. A change seen at several viewports, color schemes or stories is listed once with all of them; its areas and diff image are those of the one named in parentheses, such as `(in 1280x720)` or `(in Primary · 1280x720)`, because the same change can sit at other coordinates at another viewport. When the page grew or shrank, the line also gives both page sizes, such as `page size 1280x720 -> 1280x1600`. Errors come first; `noise`, `unchanged` and `skipped` screens get one line each at the end. The color scheme is named only when it is `dark`.
 
 ### Targets
 
-| Target           | Example                                                   |
-| ---------------- | --------------------------------------------------------- |
-| URL              | `http://localhost:5173/settings`                          |
-| Static HTML file | `./dist/index.html`, `file:///path/to/page.html`          |
-| Storybook story  | `--storybook http://localhost:6006 --story "src/Button*"` |
+| Target           | Example                                                                         |
+| ---------------- | ------------------------------------------------------------------------------- |
+| URL              | `http://localhost:5173/settings`                                                |
+| Static HTML file | `./dist/index.html`, `file:///path/to/page.html`                                |
+| Storybook story  | `--storybook http://localhost:6006 --story "src/components/Button.stories.tsx"` |
+
+### Names
+
+People read the report, so give every target a name with `name=target`, in the words you would use for it:
+
+```sh
+ui-compare before "Pricing page=http://localhost:5173/pricing" "Settings page=./dist/settings.html" \
+  --storybook http://localhost:6006 --story "Button=src/components/Button.stories.tsx"
+```
+
+- The name is the part before the first `=`, trimmed. When that part is empty or contains `://`, or nothing follows the `=`, the whole argument is the target, so `http://localhost:5173/search?q=a` stays an unnamed URL.
+- A named `--story` pattern must match the stories of one component (one Storybook title), and the name stands for that component. A named pattern that matches several components is a usage error; give each component its own pattern, or drop the name.
+- The name is kept with the target in `run.json` and shown in the CLI output, the report and the pane. `summary.json` and `review.json` (`screen.target`) keep the full URL or component title.
+
+Without a name, a page or file is shown under the title it had in Before. A page without a title, or one that shares its title with another unnamed page, is shown under its path: the path and query of its URL (its host when the path is `/`), or the name of its file. A Storybook component is shown under the last segment of its title, so `Example/Button` becomes `Button`. An unnamed target shown like another target gets a longer label: a page its host, path and query (`a.test/settings`), or its whole URL without the scheme when even that is shared; a file as many of its last folders as tell it apart (`dist/index.html`); and a component its full title (`Example/Button`). A named target always keeps its name.
 
 Stories need Storybook 8.5 or later, which reports when a story has finished rendering, including its `play` function. `--story` takes a story id (`button--primary`), a story file path, or a glob over story file paths, and can be repeated. Without `--story`, every story in the Storybook is captured. Stories honour `parameters.vrt.skip`, `delay`, `mask` and `remove`, the same keys [storybook-addon-vrt](https://github.com/k35o/storybook-addon-vrt) reads.
 
 ### Options of `before`
 
-| Option                    | Default    | Meaning                                                |
-| ------------------------- | ---------- | ------------------------------------------------------ |
-| `--viewport <WxH>`        | `1280x720` | Viewport size; repeatable                              |
-| `--color-scheme <scheme>` | `light`    | `light` or `dark`; repeatable                          |
-| `--mask <selector>`       |            | Paint over matching elements in every shot; repeatable |
-| `--storybook <url>`       |            | Base URL of a running Storybook                        |
-| `--story <pattern>`       | all        | Story id or glob over story files; repeatable          |
+| Option                    | Default    | Meaning                                                                           |
+| ------------------------- | ---------- | --------------------------------------------------------------------------------- |
+| `--viewport <WxH>`        | `1280x720` | Viewport size; repeatable                                                         |
+| `--color-scheme <scheme>` | `light`    | `light` or `dark`; repeatable                                                     |
+| `--mask <selector>`       |            | Paint over matching elements in every shot; repeatable                            |
+| `--storybook <url>`       |            | Base URL of a running Storybook                                                   |
+| `--story <pattern>`       | all        | Story id or glob over story files, optionally named as `name=pattern`; repeatable |
 
 Every target is captured at every viewport × color scheme. Passing `--viewport` or `--color-scheme` replaces its default rather than adding to it.
 
@@ -95,7 +110,7 @@ Each run lives in `.ui-compare/<id>/` under the current directory. The folder ca
 
 ```
 .ui-compare/<id>/
-├── run.json       targets and Before results
+├── run.json       targets with their names, and Before results
 ├── before/        Before shots
 ├── unstable/      differences between the two Before loads
 ├── after/         After shots (replaced by every `after`)
@@ -110,12 +125,12 @@ Each run lives in `.ui-compare/<id>/` under the current directory. The folder ca
 
 ### The report
 
-`report.html` is a single page per run, read from top to bottom like the before/after section of a pull request:
+`report.html` is a single page per run, read from top to bottom like the before/after section of a pull request, and speaks in the [names](#names) of the targets:
 
-- The headline counts changed screens: pages, and Storybook components with all their stories.
-- Capture errors come first, with the screen and the reason.
-- Each changed screen gets a card. Every changed area is cropped with some margin and shown at its natural size, Before next to After, with the area outlined. With five or more areas, or areas that cover more than half of the page, the full page is shown instead. The same change at several viewports, color schemes or stories is shown once, with the conditions listed. **View full page** shows the whole page side by side, with a slider, or as the pixel diff.
-- At the end, one line each for screens that changed only where they were unstable in Before, unchanged screens and skipped screens. Open a noise or unchanged line to see its images.
+- A line gives the times of Before and After. The headline names what changed, such as `Pricing page and Button changed` (three names at most, then a count of the rest), or, when nothing changed, what could not be captured. A sentence under it counts the rest: what could not be captured, what changed only where it changes on every load, what is unchanged and what was left out.
+- What could not be captured comes first, with the reason.
+- Each changed page or Storybook component gets a card under its name. Each change in it is headed by where it was seen, such as `1280px and 375px wide`, `1280px wide, dark mode` or `Primary and Secondary (1280px wide)`; heights appear only when two viewports share a width. Every changed spot is cropped with some margin and shown at its natural size, Before next to After, with the spot outlined. With five or more spots, or spots that cover more than half of the page, the full page is shown instead. The same change at several viewports, color schemes or stories is shown once. When the page grew or shrank, the card says how. **View full page** shows the whole page side by side, with a slider, or as the pixel diff.
+- At the end, under **Others**, one line each for what changed only where it changes on every load (like a clock), what is unchanged and what was left out, with the reason. Open a line to see its images.
 
 The page is in Japanese when the browser language is Japanese, and in English otherwise.
 
@@ -125,7 +140,7 @@ With the plugin installed, Claude Code Desktop shows the report in a pane beside
 
 - The pane opens by itself whenever an `after` run finishes. When the window is too narrow to fit it, or another pane is in front, a notice appears instead; open the pane with `/ui-compare-pane`.
 - It holds what the report holds, top to bottom. Each changed area is cropped with Before above After. **View full page** shows the After page with the changed areas outlined; point at it to see Before.
-- **Not intended** on a change adds a note about that change, with its image paths, to your prompt. Add your own words and send it to have the agent fix it.
+- **Not intended** on a change adds a note about that change to your prompt, with its name, its full URL or component title, and its image paths. Add your own words and send it to have the agent fix it.
 - The pane follows Claude Code's `language` setting: Japanese when it is Japanese, English otherwise.
 
 While the desktop app is attached to the session, `ui-compare after` prints `Report:  shown in the ui-compare pane in Claude Code` and writes no `report.html`, even if you closed the pane; `/ui-compare-pane` shows the latest run again. In the terminal and every other agent, the report is written as usual.

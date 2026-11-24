@@ -13,7 +13,7 @@ import type {
   StripImage,
 } from '../plugin/hooks/review-file.ts';
 import { writeReviewFile } from '../src/review-file.ts';
-import { buildReview } from '../src/review.ts';
+import { buildReview, screensOf } from '../src/review.ts';
 import type { ShotImages } from '../src/review.ts';
 import type {
   Box,
@@ -39,9 +39,21 @@ const WHITE: Rgba = [255, 255, 255, 255];
 const MAX_STRIP_HEIGHT = 1024;
 const MAX_STRIP_BASE64_LENGTH = 100_000;
 
-const HOME: UrlTarget = { kind: 'url', url: 'http://127.0.0.1:5173/' };
-const ABOUT: UrlTarget = { kind: 'url', url: 'http://127.0.0.1:5173/about' };
-const NEWS: UrlTarget = { kind: 'url', url: 'http://127.0.0.1:5173/news' };
+const HOME: UrlTarget = {
+  kind: 'url',
+  url: 'http://127.0.0.1:5173/',
+  label: 'Home',
+};
+const ABOUT: UrlTarget = {
+  kind: 'url',
+  url: 'http://127.0.0.1:5173/about',
+  label: 'About',
+};
+const NEWS: UrlTarget = {
+  kind: 'url',
+  url: 'http://127.0.0.1:5173/news',
+  label: 'News',
+};
 
 const BOX: Box = { x: 20, y: 20, width: 10, height: 10 };
 
@@ -162,8 +174,8 @@ function failed(of: Shot, message: string): ShotResult {
   };
 }
 
-function screenRef({ url }: UrlTarget): ReviewScreenRef {
-  return { key: `url:${url}`, kind: 'url', label: url };
+function screenRef({ url, label = '' }: UrlTarget): ReviewScreenRef {
+  return { key: `url:${url}`, kind: 'url', label, target: url };
 }
 
 function variantOf(shotKey: string): ReviewVariant {
@@ -206,7 +218,14 @@ async function write(
   const shotImages: ShotImages = new Map(Object.entries(images));
   await writeReviewFile(
     dir,
-    buildReview(summary, shotImages),
+    buildReview(
+      summary,
+      shotImages,
+      screensOf(
+        shots.map((result) => result.shot),
+        [],
+      ),
+    ),
     shotImages,
     summary,
   );

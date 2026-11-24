@@ -27,7 +27,7 @@ import {
 } from 'vite-plus/test';
 
 import type { ReviewFile } from '../plugin/hooks/review-file.ts';
-import type { Summary } from '../src/types.ts';
+import type { RunFile, Summary } from '../src/types.ts';
 
 type CliResult = { code: number | null; stdout: string; stderr: string };
 
@@ -72,8 +72,8 @@ afterAll(async () => {
   });
 });
 
-function html(body: string): string {
-  return `<!doctype html><html><head><style>body { margin: 0; background: #fff; }</style></head><body>${body}</body></html>`;
+function html(body: string, head = ''): string {
+  return `<!doctype html><html><head><style>body { margin: 0; background: #fff; }</style>${head}</head><body>${body}</body></html>`;
 }
 
 function blocks(color: string, lefts: number[]): string {
@@ -236,7 +236,7 @@ describe('before', () => {
       stderr: '',
       stdout: lines(
         `Captured Before for run ${id}: 1 screen, 4 shots`,
-        `  ok        ${origin}/sizes  400x300, 400x300 dark, 320x240, 320x240 dark`,
+        `  ok        /sizes  400x300, 400x300 dark, 320x240, 320x240 dark`,
         `Next: make the change, then run: ui-compare after ${id}`,
       ),
     });
@@ -262,7 +262,7 @@ describe('before', () => {
       stderr: '',
       stdout: lines(
         `Captured Before for run ${id}: 1 screen, 2 shots`,
-        `  ok        ${origin}/warns  400x300, 320x240`,
+        `  ok        /warns  400x300, 320x240`,
         '    warning: Page error: boom',
         `Next: make the change, then run: ui-compare after ${id}`,
       ),
@@ -291,7 +291,7 @@ describe('before', () => {
       stderr: '',
       stdout: lines(
         `Captured Before for run ${id}: 1 screen, 1 shot`,
-        `  unstable  ${origin}/unstable  400x300  differs between two loads at x=100 y=0 50x20 (0.83%); mask it with --mask and run before again`,
+        `  unstable  /unstable  400x300  differs between two loads at x=100 y=0 50x20 (0.83%); mask it with --mask and run before again`,
         `Next: make the change, then run: ui-compare after ${id}`,
       ),
     });
@@ -319,7 +319,7 @@ describe('before', () => {
       stderr: '',
       stdout: lines(
         `Captured Before for run ${id}: 1 screen, 1 shot`,
-        `  error     ${origin}/missing  400x300  HTTP 404 from ${origin}/missing`,
+        `  error     /missing  400x300  HTTP 404 from ${origin}/missing`,
         `Next: make the change, then run: ui-compare after ${id}`,
       ),
     });
@@ -387,6 +387,115 @@ describe('before', () => {
     });
   });
 
+  test('targets and stories are listed under the names given to them', async () => {
+    pages.set('/pricing', box('#000'));
+    const url = storybook('/sb-named', [
+      { name: 'Primary', body: blocks('#000', [10]) },
+      { name: 'Secondary', body: blocks('#00f', [10]) },
+    ]);
+
+    const result = await uiCompare(
+      'before',
+      `料金ページ=${origin}/pricing`,
+      '--storybook',
+      url,
+      '--story',
+      'ボタン=src/Button.stories.tsx',
+      '--viewport',
+      '400x300',
+    );
+
+    const id = runIdOf(result.stdout);
+    expect(result).toStrictEqual({
+      code: 0,
+      stderr: '',
+      stdout: lines(
+        `Captured Before for run ${id}: 2 screens, 3 shots`,
+        '  ok        料金ページ  400x300',
+        '  ok        ボタン: Primary, Secondary  400x300',
+        `Next: make the change, then run: ui-compare after ${id}`,
+      ),
+    });
+  });
+
+  test('unnamed pages are listed under their titles, and pages that share a title under their paths', async () => {
+    const titled = (title: string) => () =>
+      html(blocks('#000', [10]), `<title>${title}</title>`);
+    pages.set('/titled-pricing', titled('Pricing'));
+    pages.set('/titled-a', titled('Example'));
+    pages.set('/titled-b', titled('Example'));
+
+    const result = await uiCompare(
+      'before',
+      `${origin}/titled-pricing`,
+      `${origin}/titled-a`,
+      `${origin}/titled-b`,
+      '--viewport',
+      '400x300',
+    );
+
+    expect(result.stdout.split('\n').slice(1, 4)).toStrictEqual([
+      '  ok        Pricing  400x300',
+      '  ok        /titled-a  400x300',
+      '  ok        /titled-b  400x300',
+    ]);
+  });
+
+  test('run.json keeps the name with its target and the title with its Before result', async () => {
+    pages.set('/kept', () =>
+      html(blocks('#000', [10]), '<title>  Kept page  </title>'),
+    );
+    const id = await before(
+      `料金ページ=${origin}/kept`,
+      '--viewport',
+      '400x300',
+    );
+
+    const run = await readJson<RunFile>(id, 'run.json');
+    expect({
+      target: run.shots[0]?.target,
+      before: run.before[0],
+    }).toMatchObject({
+      target: { kind: 'url', url: `${origin}/kept`, label: '料金ページ' },
+      before: { status: 'captured', title: 'Kept page' },
+    });
+  });
+
+  test('a named story pattern that matches two components exits 2 without creating a run', async () => {
+    const story = (id: string, title: string) => ({
+      type: 'story',
+      id,
+      title,
+      name: 'Default',
+      importPath: `./src/${title}.stories.tsx`,
+    });
+    pages.set('/sb-two/index.json', () =>
+      JSON.stringify({
+        v: 5,
+        entries: {
+          'button--default': story('button--default', 'Button'),
+          'card--default': story('card--default', 'Card'),
+        },
+      }),
+    );
+
+    const result = await uiCompare(
+      'before',
+      '--storybook',
+      `${origin}/sb-two`,
+      '--story',
+      '部品=src/**',
+    );
+
+    expect(result).toStrictEqual({
+      code: 2,
+      stdout: '',
+      stderr:
+        'ui-compare: --story 部品=src/** matches stories of 2 components (Button, Card). Name one component per pattern, or drop the name\n',
+    });
+    expect(existsSync(join(cwd, '.ui-compare'))).toBe(false);
+  });
+
   test('an invalid option value exits 2 with a one-line message', async () => {
     await expect(
       uiCompare('before', `${origin}/sizes`, '--viewport', 'big'),
@@ -431,7 +540,7 @@ describe('after', () => {
       stderr: '',
       stdout: lines(
         `Compared run ${id}: 0 screens changed, 0 errors`,
-        `  unchanged  ${origin}/same  400x300`,
+        `  unchanged  /same  400x300`,
         `Report:  .ui-compare/${id}/report.html`,
         `Summary: .ui-compare/${id}/summary.json`,
       ),
@@ -451,12 +560,62 @@ describe('after', () => {
       stderr: '',
       stdout: lines(
         `Compared run ${id}: 1 screen changed, 0 errors`,
-        `  changed    ${origin}/change`,
+        `  changed    /change`,
         `    400x300: 1 area at x=10 y=20 30x40  .ui-compare/${id}/diff/001-127-0-0-1-${port}-change-400x300-light.png`,
         `Report:  .ui-compare/${id}/report.html`,
         `Summary: .ui-compare/${id}/summary.json`,
       ),
     });
+  });
+
+  test('a change is listed under the name given to its target', async () => {
+    pages.set('/named-change', box('#000'));
+    const id = await before(
+      `料金ページ=${origin}/named-change`,
+      '--viewport',
+      '400x300',
+    );
+    pages.set('/named-change', box('#f00'));
+
+    const result = await uiCompare('after', id);
+
+    expect(result.stdout.split('\n').slice(0, 3)).toStrictEqual([
+      `Compared run ${id}: 1 screen changed, 0 errors`,
+      '  changed    料金ページ',
+      `    400x300: 1 area at x=10 y=20 30x40  .ui-compare/${id}/diff/001-127-0-0-1-${port}-named-change-400x300-light.png`,
+    ]);
+  });
+
+  test('review.json names each screen by its label and its full target', async () => {
+    pages.set('/named-review', box('#000'));
+    const url = storybook('/sb-review', [
+      { name: 'Primary', body: blocks('#000', [10]) },
+    ]);
+    const id = await before(
+      `料金ページ=${origin}/named-review`,
+      '--storybook',
+      url,
+      '--viewport',
+      '400x300',
+    );
+
+    await uiCompare('after', id);
+
+    const review = await readJson<ReviewFile>(id, 'review.json');
+    expect(review.unchanged.map(({ screen }) => screen)).toStrictEqual([
+      {
+        key: `url:${origin}/named-review`,
+        kind: 'url',
+        label: '料金ページ',
+        target: `${origin}/named-review`,
+      },
+      {
+        key: 'component:Button',
+        kind: 'component',
+        label: 'Button',
+        target: 'Button',
+      },
+    ]);
   });
 
   test('summary.json records the changed areas of each shot', async () => {
@@ -494,7 +653,7 @@ describe('after', () => {
     expect(result.stdout).toBe(
       lines(
         `Compared run ${id}: 1 screen changed, 0 errors`,
-        `  changed    ${origin}/both`,
+        `  changed    /both`,
         `    400x300, 320x240: 1 area at x=10 y=20 30x40 (in 400x300)  .ui-compare/${id}/diff/001-127-0-0-1-${port}-both-400x300-light.png`,
         `Report:  .ui-compare/${id}/report.html`,
         `Summary: .ui-compare/${id}/summary.json`,
@@ -649,10 +808,10 @@ describe('after', () => {
       stderr: '',
       stdout: lines(
         `Compared run ${id}: 1 screen changed, 1 error`,
-        `  error      ${origin}/order-breaks  400x300  after: HTTP 404 from ${origin}/order-breaks`,
-        `  changed    ${origin}/order-change`,
+        `  error      /order-breaks  400x300  after: HTTP 404 from ${origin}/order-breaks`,
+        `  changed    /order-change`,
         `    400x300: 1 area at x=10 y=20 30x40  .ui-compare/${id}/diff/002-127-0-0-1-${port}-order-change-400x300-light.png`,
-        `  unchanged  ${origin}/order-same  400x300`,
+        `  unchanged  /order-same  400x300`,
         `Report:  .ui-compare/${id}/report.html`,
         `Summary: .ui-compare/${id}/summary.json`,
       ),
@@ -739,7 +898,7 @@ describe('after', () => {
 
     const result = await uiCompare('after', id);
 
-    expect(result.stdout).toContain(`  unchanged  ${origin}/revert  400x300\n`);
+    expect(result.stdout).toContain(`  unchanged  /revert  400x300\n`);
     expect(
       existsSync(
         join(
@@ -763,7 +922,7 @@ describe('after', () => {
 
     const result = await uiCompare('after', id);
 
-    expect(result.stdout).toContain(`  unchanged  ${origin}/masked  400x300\n`);
+    expect(result.stdout).toContain(`  unchanged  /masked  400x300\n`);
   });
 
   test('a shot that failed in before is an error from the before phase and exits 1', async () => {
@@ -773,7 +932,7 @@ describe('after', () => {
 
     expect(result.code).toBe(1);
     expect(result.stdout).toContain(
-      `  error      ${origin}/gone  400x300  before: HTTP 404 from ${origin}/gone\n`,
+      `  error      /gone  400x300  before: HTTP 404 from ${origin}/gone\n`,
     );
     const [shot] = (await readJson<Summary>(id, 'summary.json')).shots;
     expect(shot?.error).toStrictEqual({
@@ -817,7 +976,7 @@ describe('after', () => {
       stderr: '',
       stdout: lines(
         `Compared run ${id}: 0 screens changed, 0 errors`,
-        `  noise      ${origin}/flaky  400x300  changed only where it was unstable in Before`,
+        `  noise      /flaky  400x300  changed only where it was unstable in Before`,
         `Report:  .ui-compare/${id}/report.html`,
         `Summary: .ui-compare/${id}/summary.json`,
       ),
@@ -906,7 +1065,7 @@ describe('the Claude Code pane', () => {
       stderr: '',
       stdout: lines(
         `Compared run ${id}: 1 screen changed, 0 errors`,
-        `  changed    ${origin}/pane`,
+        `  changed    /pane`,
         `    400x300: 1 area at x=10 y=20 30x40  .ui-compare/${id}/diff/${key}.png`,
         'Report:  shown in the ui-compare pane in Claude Code',
         `Summary: .ui-compare/${id}/summary.json`,

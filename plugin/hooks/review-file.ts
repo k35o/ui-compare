@@ -21,7 +21,10 @@ export type Box = { x: number; y: number; width: number; height: number };
 export type ReviewScreenRef = {
   key: string;
   kind: 'url' | 'component';
+  /** The name a person reads: the one given at `before`, else a page title or path. */
   label: string;
+  /** What was captured: the full URL, or the Storybook component title. */
+  target: string;
 };
 
 export type ReviewVariant = {

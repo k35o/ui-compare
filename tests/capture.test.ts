@@ -195,6 +195,23 @@ const routes: Record<string, Route> = {
   '/page-error': {
     body: html('<p>broken</p><script>throw new Error("boom")</script>'),
   },
+  '/titled': {
+    body: html(
+      '<p>pricing</p>',
+      '<meta charset="utf-8"><title>  料金 | Example  </title>',
+    ),
+  },
+  '/titled-by-script': {
+    body: html(
+      '<p>pricing</p>',
+      `<title>Loading</title><script>
+        addEventListener('load', () => setTimeout(() => {
+          document.title = 'Pricing';
+        }, 50));
+      </script>`,
+    ),
+  },
+  '/blank-title': { body: html('<p>pricing</p>', '<title>   </title>') },
   '/story/success': {
     body: fakeStorybook({
       story: '<div style="height: 300px; background: #00f"></div>',
@@ -686,6 +703,32 @@ describe('capture', () => {
     expect(first).toMatchObject({ status: 'captured', warnings: [] });
     expect(capturedPng(first).equals(capturedPng(second))).toBe(true);
   });
+
+  test('reads the title of the page, trimmed', async () => {
+    const outcome = await capturer.capture(urlShot('/titled'), { masks: [] });
+
+    expect(outcome).toMatchObject({
+      status: 'captured',
+      title: '料金 | Example',
+    });
+  });
+
+  test('reads the title a script of the page sets after load', async () => {
+    const outcome = await capturer.capture(urlShot('/titled-by-script'), {
+      masks: [],
+    });
+
+    expect(outcome).toMatchObject({ status: 'captured', title: 'Pricing' });
+  });
+
+  test.each(['/short', '/blank-title'])(
+    'leaves out the empty title of %s',
+    async (path) => {
+      const outcome = await capturer.capture(urlShot(path), { masks: [] });
+
+      expect(outcome).not.toHaveProperty('title');
+    },
+  );
 
   test('reports uncaught page errors as warnings', async () => {
     const outcome = await capturer.capture(urlShot('/page-error'), {

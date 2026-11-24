@@ -1,9 +1,10 @@
 import { PNG } from 'pngjs';
 import { describe, expect, test } from 'vite-plus/test';
 
-import { buildReview } from '../src/review.ts';
+import { buildReview, screensOf } from '../src/review.ts';
 import type { Crop, ListEntry, Review } from '../src/review.ts';
 import type {
+  BeforeShot,
   Box,
   ColorScheme,
   Shot,
@@ -181,6 +182,10 @@ function review(
         { before, after },
       ]),
     ),
+    screensOf(
+      shots.map((result) => result.shot),
+      [],
+    ),
   );
 }
 
@@ -267,7 +272,8 @@ describe('screens', () => {
         screen: {
           key: 'url:http://127.0.0.1:5173/',
           kind: 'url',
-          label: 'http://127.0.0.1:5173/',
+          label: '127.0.0.1:5173',
+          target: 'http://127.0.0.1:5173/',
         },
         variants: [
           {
@@ -288,7 +294,8 @@ describe('screens', () => {
         screen: {
           key: 'url:http://127.0.0.1:5173/about',
           kind: 'url',
-          label: 'http://127.0.0.1:5173/about',
+          label: '/about',
+          target: 'http://127.0.0.1:5173/about',
         },
         variants: [
           {
@@ -314,7 +321,8 @@ describe('screens', () => {
         screen: {
           key: 'component:Components/Button',
           kind: 'component',
-          label: 'Components/Button',
+          label: 'Button',
+          target: 'Components/Button',
         },
         variants: [
           {
@@ -337,7 +345,8 @@ describe('screens', () => {
         screen: {
           key: 'component:Components/Card',
           kind: 'component',
-          label: 'Components/Card',
+          label: 'Card',
+          target: 'Components/Card',
         },
         variants: [
           {
@@ -348,6 +357,243 @@ describe('screens', () => {
             warnings: [],
           },
         ],
+      },
+    ]);
+  });
+});
+
+describe('screensOf', () => {
+  const page = (url: string, label?: string): Target =>
+    label === undefined ? { kind: 'url', url } : { kind: 'url', url, label };
+
+  function captured(key: string, title?: string): BeforeShot {
+    return title === undefined
+      ? { key, status: 'captured', warnings: [] }
+      : { key, status: 'captured', warnings: [], title };
+  }
+
+  function labels(shots: Shot[], before: BeforeShot[] = []): string[] {
+    const screens = screensOf(shots, before);
+    return shots.map(({ key }) => screens.get(key)?.label ?? '');
+  }
+
+  test('a target named at before is labelled with its name', () => {
+    expect(
+      labels(
+        [
+          shot(
+            '0-pricing',
+            page('http://127.0.0.1:5173/pricing', '料金ページ'),
+          ),
+        ],
+        [captured('0-pricing', 'Pricing | Example')],
+      ),
+    ).toStrictEqual(['料金ページ']);
+  });
+
+  test('an unnamed page is labelled with its title in Before', () => {
+    expect(
+      labels(
+        [shot('0-pricing', page('http://127.0.0.1:5173/pricing'))],
+        [captured('0-pricing', 'Pricing | Example')],
+      ),
+    ).toStrictEqual(['Pricing | Example']);
+  });
+
+  test('a page takes the title of its first shot that was captured in Before', () => {
+    const pricing = page('http://127.0.0.1:5173/pricing');
+
+    expect(
+      labels(
+        [
+          shot('0-pricing', pricing),
+          shot('1-pricing', pricing, MOBILE),
+          shot('2-pricing', pricing, MOBILE, 'dark'),
+        ],
+        [
+          { key: '0-pricing', status: 'error', message: 'HTTP 500' },
+          captured('1-pricing', 'Pricing'),
+          captured('2-pricing', 'Pricing (dark)'),
+        ],
+      ),
+    ).toStrictEqual(['Pricing', 'Pricing', 'Pricing']);
+  });
+
+  test('two unnamed pages with the same title are both labelled with their paths', () => {
+    expect(
+      labels(
+        [
+          shot('0-a', page('http://127.0.0.1:5173/a')),
+          shot('1-b', page('http://127.0.0.1:5173/b')),
+          shot('2-c', page('http://127.0.0.1:5173/c')),
+        ],
+        [
+          captured('0-a', 'Example'),
+          captured('1-b', 'Example'),
+          captured('2-c', 'Contact'),
+        ],
+      ),
+    ).toStrictEqual(['/a', '/b', 'Contact']);
+  });
+
+  test('a named page does not take the title of an unnamed page with the same title', () => {
+    expect(
+      labels(
+        [
+          shot('0-a', page('http://127.0.0.1:5173/a', 'Page A')),
+          shot('1-b', page('http://127.0.0.1:5173/b')),
+        ],
+        [captured('0-a', 'Example'), captured('1-b', 'Example')],
+      ),
+    ).toStrictEqual(['Page A', 'Example']);
+  });
+
+  test.each([
+    {
+      url: 'http://127.0.0.1:5173/settings?tab=profile',
+      label: '/settings?tab=profile',
+    },
+    { url: 'http://127.0.0.1:5173/', label: '127.0.0.1:5173' },
+    {
+      url: 'http://127.0.0.1:5173/?tab=profile',
+      label: '127.0.0.1:5173?tab=profile',
+    },
+    { url: 'http://127.0.0.1:5173/%E6%96%99%E9%87%91', label: '/料金' },
+    { url: 'file:///tmp/dist/my%20page.html', label: 'my page.html' },
+    { url: 'file:///tmp/dist/100%.html', label: '100%.html' },
+  ])('an unnamed page without a title is labelled $label', ({ url, label }) => {
+    expect(labels([shot('0-page', page(url))])).toStrictEqual([label]);
+  });
+
+  test('an unnamed component is labelled with the last segment of its title', () => {
+    expect(labels([shot('0-button-primary', BUTTON_PRIMARY)])).toStrictEqual([
+      'Button',
+    ]);
+  });
+
+  test('a named component is labelled with its name', () => {
+    expect(
+      labels([
+        shot('0-button-primary', { ...BUTTON_PRIMARY, label: 'ボタン' }),
+      ]),
+    ).toStrictEqual(['ボタン']);
+  });
+
+  describe('an unnamed screen labelled like another screen', () => {
+    test('a page whose title is the name of another page is labelled with its host and path', () => {
+      expect(
+        labels(
+          [
+            shot('0-pricing', page('http://127.0.0.1:5173/pricing', 'Pricing')),
+            shot('1-old', page('http://127.0.0.1:5173/pricing-old?plan=a')),
+          ],
+          [captured('0-pricing', 'Pricing'), captured('1-old', 'Pricing')],
+        ),
+      ).toStrictEqual(['Pricing', '127.0.0.1:5173/pricing-old?plan=a']);
+    });
+
+    test('pages with one path on two hosts are labelled with their hosts and paths', () => {
+      expect(
+        labels([
+          shot('0-a', page('https://a.test/settings')),
+          shot('1-b', page('https://b.test/settings')),
+        ]),
+      ).toStrictEqual(['a.test/settings', 'b.test/settings']);
+    });
+
+    test('pages with one host and path are labelled with their whole URLs without the scheme', () => {
+      expect(
+        labels([
+          shot('0-settings', page('http://127.0.0.1:5173/#/settings')),
+          shot('1-profile', page('http://127.0.0.1:5173/#/profile')),
+        ]),
+      ).toStrictEqual([
+        '127.0.0.1:5173/#/settings',
+        '127.0.0.1:5173/#/profile',
+      ]);
+    });
+
+    test('files with one name are labelled with as many of their last folders as tell them apart', () => {
+      expect(
+        labels([
+          shot('0-dist', page('file:///tmp/app/dist/index.html')),
+          shot('1-settings', page('file:///tmp/app/settings/index.html')),
+          shot('2-old', page('file:///tmp/old/settings/index.html')),
+        ]),
+      ).toStrictEqual([
+        'dist/index.html',
+        'app/settings/index.html',
+        'old/settings/index.html',
+      ]);
+    });
+
+    test('a file whose title is the name of another page is labelled with its file name', () => {
+      expect(
+        labels(
+          [
+            shot('0-home', page('http://127.0.0.1:5173/', 'Home')),
+            shot('1-dist', page('file:///tmp/app/dist/index.html')),
+          ],
+          [captured('1-dist', 'Home')],
+        ),
+      ).toStrictEqual(['Home', 'index.html']);
+    });
+
+    test('a file whose file name is the name of another page is labelled with its folder', () => {
+      expect(
+        labels([
+          shot('0-home', page('http://127.0.0.1:5173/', 'index.html')),
+          shot('1-dist', page('file:///tmp/app/dist/index.html')),
+        ]),
+      ).toStrictEqual(['index.html', 'dist/index.html']);
+    });
+
+    test('components with one last segment are labelled with their full titles', () => {
+      expect(
+        labels([
+          shot(
+            '0-example',
+            story('Example/Button', 'Primary', 'example-button--primary'),
+          ),
+          shot(
+            '1-forms',
+            story('Forms/Button', 'Primary', 'forms-button--primary'),
+          ),
+        ]),
+      ).toStrictEqual(['Example/Button', 'Forms/Button']);
+    });
+
+    test('a component whose last segment is the name of a page is labelled with its full title', () => {
+      expect(
+        labels([
+          shot('0-button', page('http://127.0.0.1:5173/button', 'Button')),
+          shot('1-button-primary', BUTTON_PRIMARY),
+        ]),
+      ).toStrictEqual(['Button', 'Components/Button']);
+    });
+  });
+
+  test('a screen keeps its full target next to its label', () => {
+    const screens = screensOf(
+      [
+        shot('0-pricing', page('http://127.0.0.1:5173/pricing', '料金ページ')),
+        shot('1-button-primary', BUTTON_PRIMARY),
+      ],
+      [],
+    );
+
+    expect([...screens.values()]).toStrictEqual([
+      {
+        key: 'url:http://127.0.0.1:5173/pricing',
+        kind: 'url',
+        label: '料金ページ',
+        target: 'http://127.0.0.1:5173/pricing',
+      },
+      {
+        key: 'component:Components/Button',
+        kind: 'component',
+        label: 'Button',
+        target: 'Components/Button',
       },
     ]);
   });
@@ -365,7 +611,8 @@ describe('errors and skipped shots', () => {
         screen: {
           key: 'url:http://127.0.0.1:5173/',
           kind: 'url',
-          label: 'http://127.0.0.1:5173/',
+          label: '127.0.0.1:5173',
+          target: 'http://127.0.0.1:5173/',
         },
         variants: [
           {
@@ -1070,16 +1317,21 @@ test('changed screens follow their first change and changes their first variant'
 });
 
 test('a changed shot without its After image throws', () => {
+  const home = shot('0-home', HOME);
   const summary: Summary = {
     version: 1,
     id: 'k3x9a2',
     beforeAt: '2026-11-24T09:00:00.000Z',
     afterAt: '2026-11-24T09:10:00.000Z',
     counts: { changed: 1, unchanged: 0, error: 0, skipped: 0 },
-    shots: [changed(shot('0-home', HOME), [BOX])],
+    shots: [changed(home, [BOX])],
   };
 
   expect(() =>
-    buildReview(summary, new Map([['0-home', { before: PAGE }]])),
+    buildReview(
+      summary,
+      new Map([['0-home', { before: PAGE }]]),
+      screensOf([home], []),
+    ),
   ).toThrow('Changed shot 0-home has no Before or After image');
 });

@@ -17,16 +17,29 @@ Pick the pages and stories your change will touch, plus the ones that share the 
 The tool never starts servers. Start the dev server or `storybook dev` yourself if it is not running, then:
 
 ```bash
-npx ui-compare before http://localhost:5173/ http://localhost:5173/settings
-npx ui-compare before --storybook http://localhost:6006 --story "src/components/Button*" --story card--default
-npx ui-compare before ./dist/index.html
+npx ui-compare before "Home=http://localhost:5173/" "Settings page=http://localhost:5173/settings"
+npx ui-compare before --storybook http://localhost:6006 --story "Button=src/components/Button.stories.tsx" --story "Card=card--default"
+npx ui-compare before "Landing page=./dist/index.html"
 ```
 
+- Name every URL and file target and every `--story` pattern as `name=target`. The user reads these names in the report and the pane instead of URLs, so write them in the user's language, the way the user would call the page or component: `"料金ページ=http://localhost:5173/pricing"` for a user who writes in Japanese, `"Pricing page=http://localhost:5173/pricing"` for one who writes in English. Give each name to one thing only.
+- A named `--story` pattern must match the stories of one component (one Storybook title); a pattern that matches several is a usage error. Give each component its own named pattern, such as `--story "ボタン=src/components/Button.stories.tsx" --story "カード=src/components/Card.stories.tsx"`.
 - `--story` takes a story id, a story file path, or a glob over story file paths; quote globs. Without `--story`, every story is captured. Storybook 8.5 or later is required.
 - Add `--viewport 1280x720 --viewport 375x812` when the change can affect small screens and `--color-scheme light --color-scheme dark` when it touches colors. Passing either option replaces its default (`1280x720`, `light`) rather than adding to it. Each target is captured at every viewport × color scheme.
 - Remember the printed run id for the rest of the task.
 
-Read the Before output and fix problems **before editing**. Lines are grouped by screen (a page, or a Storybook component with its stories); shots of a screen with the same status and reason share a line.
+Read the Before output and fix problems **before editing**. Lines are grouped by screen (a page, or a Storybook component with its stories) and start with its name; shots of a screen with the same status and reason share a line:
+
+```text
+Captured Before for run 3k9x2a: 3 screens, 6 shots
+  ok        Home  1280x720, 375x812
+  ok        Settings page  1280x720, 375x812
+  unstable  Clock page  1280x720  differs between two loads at x=1100 y=16 120x24 (0.31%); mask it with --mask and run before again
+  ok        Clock page  375x812
+Next: make the change, then run: ui-compare after 3k9x2a
+```
+
+A target you did not name is listed under its page title, under its path when it has none or shares it with another unnamed page, and a component under the last segment of its title. When that is also how another target is listed, it gets a longer label, such as `a.test/settings`, `dist/index.html` or `Example/Button`.
 
 - `unstable` means the page differed between two loads (clocks, random data, carousels). Run `before` again with `--mask "<selector>"` covering that area, and use the new id. If a thin strip stays unstable, the masked element changes size with its text; mask a fixed-size container around it instead.
 - `error` means the shot could not be captured (server not running, HTTP error, redirect to a login page, compile error). Fix the cause or drop the target, then run `before` again.
@@ -47,8 +60,8 @@ Then check the output (or `.ui-compare/<id>/summary.json`):
 Compared run 3k9x2a: 1 screen changed, 0 errors
   changed    Button (Storybook)
     Primary, Secondary · 1280x720, 375x812: 1 area at x=16 y=16 106x40 (in Primary · 1280x720)  .ui-compare/3k9x2a/diff/005-button-primary-1280x720-light.png
-  noise      http://localhost:5173/clock  1280x720, 375x812  changed only where it was unstable in Before
-  unchanged  http://localhost:5173/settings  1280x720, 375x812
+  noise      Clock page  1280x720, 375x812  changed only where it was unstable in Before
+  unchanged  Settings page  1280x720, 375x812
 ```
 
 - Each line under a `changed` screen is one distinct change: where it was seen (stories, viewports, `dark`), its areas (`at x=… y=… W×H`, or `changed across the page`), and a diff image. A changed screen you did not intend to change, or an area outside what you edited, is likely a regression. Look at the diff image before deciding.
@@ -64,9 +77,9 @@ Say what changed, what did not, and anything unexpected, and point the user to t
 - If the output says `Report:  shown in the ui-compare pane in Claude Code`, the report is in the ui-compare pane beside the conversation in Claude Code, and no `report.html` was written. Tell the user to look at the pane instead of giving a path; `/ui-compare-pane` opens the pane if it is not open.
 - Otherwise, give the user the path of `.ui-compare/<id>/report.html`.
 
-The report is one page per run: capture errors, then a card per changed screen with each changed area cropped from Before and After side by side, then one line each for noise, unchanged and skipped screens. It follows the browser language (Japanese or English) and is a single file with its images embedded, so it can be opened directly or attached. The pane shows the same content.
+The report is one page per run, written for the user in the names you gave at `before`: a headline that names what changed (or what could not be captured), a sentence that counts the rest, then what could not be captured, then a card per changed page or component with each changed spot cropped from Before and After side by side, headed by where it was seen (widths, dark mode, stories), then one line each for what changed only where it changes on every load, what is unchanged and what was left out. It follows the browser language (Japanese or English) and is a single file with its images embedded, so it can be opened directly or attached. The pane shows the same content.
 
-Each change in the pane has a **Not intended** button. It drafts a message into the user's prompt that names the run id, the screen, the change's conditions and changed areas, and the paths of its diff and After images; the user adds their own words and sends it. Such a message asks you to undo or fix exactly that change and nothing else: look at the images it names, change the code, then run `after` with the same id again.
+Each change in the pane has a **Not intended** button. It drafts a message into the user's prompt that names the run id, what changed (its name and its full URL or component title), where it was seen, its changed areas, and the paths of its diff and After images; the user adds their own words and sends it. Such a message asks you to undo or fix exactly that change and nothing else: look at the images it names, change the code, then run `after` with the same id again.
 
 ## Exit codes
 

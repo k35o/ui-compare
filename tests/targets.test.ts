@@ -107,6 +107,89 @@ describe('resolveShots', () => {
     ]);
   });
 
+  test('names a URL given as name=URL', async () => {
+    expect(
+      await resolveShots(
+        input({ targets: ['料金ページ=http://localhost:5173/pricing'] }),
+      ),
+    ).toStrictEqual([
+      {
+        key: '001-localhost-5173-pricing-1280x720-light',
+        target: {
+          kind: 'url',
+          url: 'http://localhost:5173/pricing',
+          label: '料金ページ',
+        },
+        viewport: { width: 1280, height: 720 },
+        colorScheme: 'light',
+      },
+    ]);
+  });
+
+  test('names a file given as name=path', async () => {
+    const shots = await resolveShots(
+      input({ targets: ['設定ページ=page.html'], cwd: dir }),
+    );
+
+    expect(shots.map((shot) => shot.target)).toStrictEqual([
+      { kind: 'url', url: `file://${dir}/page.html`, label: '設定ページ' },
+    ]);
+  });
+
+  test('trims the spaces around a name and its target', async () => {
+    const shots = await resolveShots(
+      input({ targets: [' Pricing page = http://localhost:5173/pricing '] }),
+    );
+
+    expect(shots.map((shot) => shot.target)).toStrictEqual([
+      {
+        kind: 'url',
+        url: 'http://localhost:5173/pricing',
+        label: 'Pricing page',
+      },
+    ]);
+  });
+
+  test('names a target only by the part before its first =', async () => {
+    const shots = await resolveShots(
+      input({ targets: ['検索=http://localhost:5173/search?q=a'] }),
+    );
+
+    expect(shots.map((shot) => shot.target)).toStrictEqual([
+      {
+        kind: 'url',
+        url: 'http://localhost:5173/search?q=a',
+        label: '検索',
+      },
+    ]);
+  });
+
+  test('keeps a URL with = in its query as an unnamed URL', async () => {
+    const shots = await resolveShots(
+      input({ targets: ['http://localhost:5173/search?q=a'] }),
+    );
+
+    expect(shots.map((shot) => shot.target)).toStrictEqual([
+      { kind: 'url', url: 'http://localhost:5173/search?q=a' },
+    ]);
+  });
+
+  test.each([
+    '=http://localhost:5173/',
+    ' =page.html',
+    'Pricing=',
+    'Pricing= ',
+  ])(
+    'reads %s, with an empty side, as a target without a name',
+    async (value) => {
+      await expect(
+        resolveShots(input({ targets: [value], cwd: dir })),
+      ).rejects.toStrictEqual(
+        new UsageError(`Not a URL or an existing file: ${value}`),
+      );
+    },
+  );
+
   test('keeps a file:// URL as a URL even when the file does not exist', async () => {
     const shots = await resolveShots(
       input({ targets: ['file:///nowhere/page.html'] }),
@@ -498,6 +581,60 @@ describe('selectStories', () => {
 
   test('rejects a pattern that selects no story', () => {
     expect(() => ids(['src/pages/**', 'src/missing/**'])).toThrow(
+      new UsageError(
+        'No story matches src/missing/**. Pass a story id or a glob over story files, such as src/**/*.stories.tsx',
+      ),
+    );
+  });
+
+  test('names the stories of one component given as name=pattern', () => {
+    expect(
+      selectStories(storyIndex, ['ボタン=src/components/**'], storybook).map(
+        ({ storyId, label }) => [storyId, label],
+      ),
+    ).toStrictEqual([
+      ['components-button--primary', 'ボタン'],
+      ['components-button--secondary', 'ボタン'],
+    ]);
+  });
+
+  test('a name given to one story names every captured story of its component', () => {
+    expect(
+      selectStories(
+        storyIndex,
+        ['ボタン=components-button--primary', 'src/**'],
+        storybook,
+      ).map(({ storyId, label }) => [storyId, label]),
+    ).toStrictEqual([
+      ['components-button--primary', 'ボタン'],
+      ['components-button--secondary', 'ボタン'],
+      ['pages-settings--default', undefined],
+    ]);
+  });
+
+  test('a component named twice keeps its first name', () => {
+    expect(
+      selectStories(
+        storyIndex,
+        [
+          'ボタン=components-button--primary',
+          'Button=components-button--secondary',
+        ],
+        storybook,
+      ).map(({ label }) => label),
+    ).toStrictEqual(['ボタン', 'ボタン']);
+  });
+
+  test('rejects a named pattern that matches the stories of two components', () => {
+    expect(() => ids(['画面=src/**'])).toThrow(
+      new UsageError(
+        '--story 画面=src/** matches stories of 2 components (Components/Button, Pages/Settings). Name one component per pattern, or drop the name',
+      ),
+    );
+  });
+
+  test('rejects a named pattern that selects no story by its pattern', () => {
+    expect(() => ids(['ボタン=src/missing/**'])).toThrow(
       new UsageError(
         'No story matches src/missing/**. Pass a story id or a glob over story files, such as src/**/*.stories.tsx',
       ),

@@ -4,7 +4,7 @@ import { comparePngs } from './compare.ts';
 import { UsageError } from './errors.ts';
 import { renderReport } from './report.ts';
 import { writeReviewFile } from './review-file.ts';
-import { buildReview } from './review.ts';
+import { buildReview, screensOf } from './review.ts';
 import type { Review, ShotImages } from './review.ts';
 import {
   clearAfter,
@@ -87,7 +87,7 @@ export async function runAfter({
   };
   await writeSummary(dir, summary);
   const images = await readImages(dir, shots);
-  const review = buildReview(summary, images);
+  const review = buildReview(summary, images, screensOf(run.shots, run.before));
   await writeReviewFile(dir, review, images, summary);
   if (await isPaneAlive(cwd)) return { dir, summary, review, report: 'pane' };
   await writeReport(dir, renderReport(review, images));
@@ -120,21 +120,19 @@ async function captureBefore(
   if (second.status !== 'captured') return notCaptured(key, second);
 
   await writeImage(dir, imageFile('before', key), first.png);
-  const warnings = unique([...first.warnings, ...second.warnings]);
+  const captured = {
+    key,
+    status: 'captured' as const,
+    warnings: unique([...first.warnings, ...second.warnings]),
+    ...(first.title === undefined ? {} : { title: first.title }),
+  };
   const { passed, diffPng, mismatchRatio, bbox, regions } = comparePngs(
     first.png,
     second.png,
   );
-  if (passed || diffPng === null) {
-    return { key, status: 'captured', warnings };
-  }
+  if (passed || diffPng === null) return captured;
   await writeImage(dir, imageFile('unstable', key), diffPng);
-  return {
-    key,
-    status: 'captured',
-    warnings,
-    unstable: { mismatchRatio, bbox, regions },
-  };
+  return { ...captured, unstable: { mismatchRatio, bbox, regions } };
 }
 
 function notCaptured(

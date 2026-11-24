@@ -12,6 +12,7 @@ import {
 
 import { renderReport } from '../src/report.ts';
 import type {
+  Change,
   Crop,
   Review,
   Screen,
@@ -20,6 +21,8 @@ import type {
 } from '../src/review.ts';
 
 type Rgba = [number, number, number, number];
+
+type Dimensions = NonNullable<Change['dimensions']>;
 
 const WHITE: Rgba = [255, 255, 255, 255];
 const GRAY: Rgba = [180, 180, 180, 255];
@@ -34,17 +37,23 @@ function png(width: number, height: number, rgba: Rgba): Buffer {
   return PNG.sync.write(image);
 }
 
-const HOME = 'http://127.0.0.1:5173/home';
-const ADMIN = 'http://127.0.0.1:5173/admin';
-const NEWS = 'http://127.0.0.1:5173/news';
-const ABOUT = 'http://127.0.0.1:5173/about';
+const HOME = 'Home';
+const ADMIN = 'Admin';
+const NEWS = 'News';
+const ABOUT = 'About';
 
-function urlScreen(url: string): Screen {
-  return { key: url, kind: 'url', label: url };
+function urlScreen(label: string): Screen {
+  const target = `http://127.0.0.1:5173/${encodeURIComponent(label)}`;
+  return { key: `url:${target}`, kind: 'url', label, target };
 }
 
 function componentScreen(title: string): Screen {
-  return { key: title, kind: 'component', label: title };
+  return {
+    key: `component:Components/${title}`,
+    kind: 'component',
+    label: title,
+    target: `Components/${title}`,
+  };
 }
 
 function variant(shotKey: string, extra: Partial<Variant> = {}): Variant {
@@ -325,8 +334,8 @@ describe('renderReport in Chromium', () => {
     await browser.close();
   });
 
-  async function newPage(locale = 'en-US'): Promise<Page> {
-    const page = await browser.newPage({ locale });
+  async function newPage(locale = 'en-US', timezoneId = 'UTC'): Promise<Page> {
+    const page = await browser.newPage({ locale, timezoneId });
     pages.push(page);
     return page;
   }
@@ -335,8 +344,9 @@ describe('renderReport in Chromium', () => {
     review: Review,
     images: ShotImages = new Map(),
     locale = 'en-US',
+    timezoneId = 'UTC',
   ): Promise<Page> {
-    const page = await newPage(locale);
+    const page = await newPage(locale, timezoneId);
     await page.setContent(renderReport(review, images));
     return page;
   }
@@ -425,56 +435,150 @@ describe('renderReport in Chromium', () => {
     );
   }
 
-  test('shows capture errors, then the changed screens, then the other screens', async () => {
+  test('shows what could not be captured, then what changed, then the others', async () => {
     const page = await open(MIXED, MIXED_IMAGES);
 
     expect(
       await page.getByRole('heading', { level: 2 }).allInnerTexts(),
-    ).toStrictEqual([
-      'Could not capture',
-      'http://127.0.0.1:5173/home',
-      'Button',
-      'Other results',
-    ]);
+    ).toStrictEqual(['Not captured', 'Home', 'Button', 'Others']);
   });
 
-  test('lists noise, then unchanged, then skipped screens on one line each', async () => {
+  test('lists what changed only where it changes on every load, then what is unchanged, then what was left out', async () => {
     const page = await open(MIXED, MIXED_IMAGES);
 
     expect(
       await page
-        .getByRole('region', { name: 'Other results' })
+        .getByRole('region', { name: 'Others' })
         .getByRole('listitem')
         .allInnerTexts(),
     ).toStrictEqual([
-      'Likely noise http://127.0.0.1:5173/news 1280×720\nChanged only where the page already differed between two loads in Before.',
-      'Unchanged http://127.0.0.1:5173/about 1280×720',
-      'Skipped Card Loading · 1280×720\nparameters.vrt.skip is set',
+      'News 1280px wide\nOnly parts that change on every load (like a clock) changed',
+      'About 1280px wide\nUnchanged',
+      'Card Loading (1280px wide)\nLeft out: parameters.vrt.skip is set',
     ]);
   });
 
-  test('the headline counts changed screens in English', async () => {
-    const page = await open(MIXED, MIXED_IMAGES);
-
-    expect(await page.getByRole('heading', { level: 1 }).textContent()).toBe(
-      '2 screens changed',
-    );
-  });
-
-  test('the sentence under the headline counts the other screens in English', async () => {
-    const page = await open(MIXED, MIXED_IMAGES);
+  test('the other lines read in Japanese', async () => {
+    const page = await open(MIXED, MIXED_IMAGES, 'ja-JP');
 
     expect(
       await page
-        .getByText(
-          '1 screen could not be captured, 1 screen changed only where Before was unstable, 1 screen unchanged, and 1 screen skipped.',
-          { exact: true },
-        )
-        .isVisible(),
-    ).toBe(true);
+        .getByRole('region', { name: 'そのほか' })
+        .getByRole('listitem')
+        .allInnerTexts(),
+    ).toStrictEqual([
+      'News 幅 1280px\nもともと毎回変わる部分（時計など）だけが変わりました',
+      'About 幅 1280px\n変わっていません',
+      'Card Loading（幅 1280px）\n撮影しませんでした：parameters.vrt.skip is set',
+    ]);
   });
 
-  test('the headline counts screens that could not be captured when nothing changed', async () => {
+  const NAMES = {
+    'en-US': ['Pricing page', 'Settings page', 'Button', 'Header', 'Footer'],
+    'ja-JP': ['料金ページ', '設定ページ', 'ボタン', 'ヘッダー', 'フッター'],
+  };
+
+  function changedNames(labels: string[]): Review {
+    return changedRun(
+      'run-names',
+      labels.map((label, index) => ({
+        screen: urlScreen(label),
+        changes: [
+          {
+            variants: [variant(`${index}-page`)],
+            crops: [CROP],
+            fullPage: false,
+            marks: [],
+          },
+        ],
+      })),
+    );
+  }
+
+  function failedNames(labels: string[]): Review {
+    return {
+      ...CLEAN,
+      unchanged: [],
+      errors: labels.map((label, index) => ({
+        screen: urlScreen(label),
+        variants: [variant(`${index}-page`)],
+        phase: 'after',
+        message: 'HTTP 500',
+      })),
+    };
+  }
+
+  async function headline(review: Review, locale: string): Promise<string> {
+    const page = await open(review, new Map(), locale);
+    return (await page.getByRole('heading', { level: 1 }).textContent()) ?? '';
+  }
+
+  async function headlines(
+    count: number,
+    run: (labels: string[]) => Review,
+  ): Promise<string[]> {
+    const read = async (locale: keyof typeof NAMES) =>
+      headline(run(NAMES[locale].slice(0, count)), locale);
+    return [await read('en-US'), await read('ja-JP')];
+  }
+
+  test.each([
+    {
+      count: 1,
+      en: 'Pricing page changed',
+      ja: '「料金ページ」の見た目が変わりました',
+    },
+    {
+      count: 2,
+      en: 'Pricing page and Settings page changed',
+      ja: '「料金ページ」と「設定ページ」の見た目が変わりました',
+    },
+    {
+      count: 3,
+      en: 'Pricing page, Settings page and Button changed',
+      ja: '「料金ページ」「設定ページ」「ボタン」の見た目が変わりました',
+    },
+    {
+      count: 5,
+      en: 'Pricing page, Settings page, Button and 2 more changed',
+      ja: '「料金ページ」「設定ページ」「ボタン」ほか 2 件の見た目が変わりました',
+    },
+  ])(
+    'the headline names $count changed in order',
+    async ({ count, en, ja }) => {
+      expect(await headlines(count, changedNames)).toStrictEqual([en, ja]);
+    },
+  );
+
+  test.each([
+    {
+      count: 1,
+      en: 'Pricing page could not be captured',
+      ja: '「料金ページ」を撮影できませんでした',
+    },
+    {
+      count: 2,
+      en: 'Pricing page and Settings page could not be captured',
+      ja: '「料金ページ」と「設定ページ」を撮影できませんでした',
+    },
+    {
+      count: 3,
+      en: 'Pricing page, Settings page and Button could not be captured',
+      ja: '「料金ページ」「設定ページ」「ボタン」を撮影できませんでした',
+    },
+    {
+      count: 5,
+      en: 'Pricing page, Settings page, Button and 2 more could not be captured',
+      ja: '「料金ページ」「設定ページ」「ボタン」ほか 2 件を撮影できませんでした',
+    },
+  ])(
+    'when nothing changed, the headline names $count that could not be captured',
+    async ({ count, en, ja }) => {
+      expect(await headlines(count, failedNames)).toStrictEqual([en, ja]);
+    },
+  );
+
+  test('the headline names what could not be captured once, however many errors it had', async () => {
     const page = await open({
       ...CLEAN,
       errors: [
@@ -497,19 +601,47 @@ describe('renderReport in Chromium', () => {
     });
 
     expect(await page.getByRole('heading', { level: 1 }).textContent()).toBe(
-      '1 screen could not be captured',
+      'Admin could not be captured',
     );
   });
 
-  test('a run without shots says no screens were captured', async () => {
-    const page = await open({ ...CLEAN, unchanged: [] });
+  test.each([
+    { locale: 'en-US', text: 'Nothing looks different' },
+    { locale: 'ja-JP', text: '見た目は変わっていません' },
+  ])(
+    'a run where nothing changed says so in $locale',
+    async ({ locale, text }) => {
+      expect(await headline(CLEAN, locale)).toBe(text);
+    },
+  );
 
-    expect(await page.getByRole('heading', { level: 1 }).textContent()).toBe(
-      'No screens were captured',
+  test.each([
+    { locale: 'en-US', text: 'Nothing was captured' },
+    { locale: 'ja-JP', text: '撮影したものはありません' },
+  ])(
+    'a run without shots says nothing was captured in $locale',
+    async ({ locale, text }) => {
+      expect(await headline({ ...CLEAN, unchanged: [] }, locale)).toBe(text);
+    },
+  );
+
+  test('the sentence under the headline counts the others in English', async () => {
+    const page = await open(MIXED, MIXED_IMAGES);
+
+    expect(await page.locator('.lead').textContent()).toBe(
+      'Also 1 not captured, 1 changed only where it changes on every load, 1 unchanged and 1 left out.',
     );
   });
 
-  test('the sentence under the headline counts a screen with several errors once', async () => {
+  test('the sentence under the headline counts the others in Japanese', async () => {
+    const page = await open(MIXED, MIXED_IMAGES, 'ja-JP');
+
+    expect(await page.locator('.lead').textContent()).toBe(
+      'ほかに、撮影できなかったもの 1 件、毎回変わる部分だけが変わったもの 1 件、変わらなかったもの 1 件、撮影しなかったもの 1 件があります',
+    );
+  });
+
+  test('the sentence under the headline counts what had several errors once', async () => {
     const page = await open({
       ...MIXED,
       errors: [
@@ -534,13 +666,23 @@ describe('renderReport in Chromium', () => {
     });
 
     expect(await page.locator('.lead').textContent()).toBe(
-      '1 screen could not be captured.',
+      'Also 1 not captured.',
     );
   });
 
-  test('the sentence under the headline does not count a changed screen again', async () => {
+  test('the sentence under the headline does not count what changed again', async () => {
     const page = await open({
       ...changedRun('run-partly', MIXED.changed.slice(0, 1)),
+      errors: [
+        {
+          screen: urlScreen(HOME),
+          variants: [
+            variant('6-home', { viewport: { width: 320, height: 640 } }),
+          ],
+          phase: 'after',
+          message: 'HTTP 500',
+        },
+      ],
       unchanged: [
         {
           screen: urlScreen(HOME),
@@ -552,55 +694,185 @@ describe('renderReport in Chromium', () => {
       ],
     });
 
-    expect(await page.locator('.lead').textContent()).toBe(
-      '1 screen unchanged.',
-    );
+    expect(await page.locator('.lead').textContent()).toBe('Also 1 unchanged.');
   });
 
-  test('the headline counts changed screens in Japanese', async () => {
-    const page = await open(MIXED, MIXED_IMAGES, 'ja-JP');
+  test('the sentence under the headline leaves out what could not be captured when nothing changed', async () => {
+    const page = await open({
+      ...failedNames([ADMIN]),
+      unchanged: [{ screen: urlScreen(ABOUT), variants: [variant('5-about')] }],
+    });
 
-    expect(await page.getByRole('heading', { level: 1 }).textContent()).toBe(
-      '2 画面が変わりました',
-    );
+    expect(await page.locator('.lead').textContent()).toBe('Also 1 unchanged.');
   });
 
-  test('the Japanese headline reads naturally for twelve screens', async () => {
-    const page = await open(
-      changedRun(
-        'run-twelve',
-        Array.from({ length: 12 }, (_, index) => ({
-          screen: urlScreen(`${HOME}/${index}`),
-          changes: [
-            {
-              variants: [variant(`${index}-home`)],
-              crops: [CROP],
-              fullPage: false,
-              marks: [],
-            },
-          ],
+  test('a run where only the headline has something to say has no sentence under it', async () => {
+    const page = await open(changedNames([HOME]));
+
+    expect(await page.locator('.lead').count()).toBe(0);
+  });
+
+  async function overview(review: Review, locale: string): Promise<string[]> {
+    const page = await open(review, new Map(), locale);
+    return [
+      (await page.getByRole('heading', { level: 1 }).textContent()) ?? '',
+      (await page.locator('.lead').textContent()) ?? '',
+    ];
+  }
+
+  test.each([
+    {
+      what: 'only what was left out',
+      review: { ...CLEAN, unchanged: [], skipped: MIXED.skipped },
+      en: ['Nothing was captured', '1 left out.'],
+      ja: ['撮影したものはありません', '撮影しなかったもの 1 件があります'],
+    },
+    {
+      what: 'what is unchanged and what was left out, without "Also"',
+      review: {
+        ...CLEAN,
+        unchanged: [ADMIN, NEWS, ABOUT].map((label, index) => ({
+          screen: urlScreen(label),
+          variants: [variant(`${index}-page`)],
         })),
-      ),
-      new Map(),
-      'ja-JP',
-    );
+        skipped: MIXED.skipped,
+      },
+      en: ['Nothing looks different', '3 unchanged and 1 left out.'],
+      ja: [
+        '見た目は変わっていません',
+        '変わらなかったもの 3 件、撮影しなかったもの 1 件があります',
+      ],
+    },
+    {
+      what: 'two that changed only where they change on every load',
+      review: {
+        ...CLEAN,
+        unchanged: [],
+        noise: [NEWS, HOME].map((label, index) => ({
+          screen: urlScreen(label),
+          variants: [variant(`${index}-page`)],
+        })),
+      },
+      en: [
+        'Nothing looks different',
+        '2 changed only where they change on every load.',
+      ],
+      ja: [
+        '見た目は変わっていません',
+        '毎回変わる部分だけが変わったもの 2 件があります',
+      ],
+    },
+  ])(
+    'when nothing changed or failed, the headline and the sentence under it count $what',
+    async ({ review, en, ja }) => {
+      expect([
+        await overview(review, 'en-US'),
+        await overview(review, 'ja-JP'),
+      ]).toStrictEqual([en, ja]);
+    },
+  );
 
-    expect(await page.getByRole('heading', { level: 1 }).textContent()).toBe(
-      '12 画面が変わりました',
+  test('what could not be captured is not counted again among what changes on every load', async () => {
+    const page = await open({
+      ...changedRun('run-failed-noise', MIXED.changed.slice(0, 1)),
+      errors: MIXED.errors,
+      noise: [
+        {
+          screen: urlScreen(ADMIN),
+          variants: [
+            variant('7-admin', { viewport: { width: 375, height: 812 } }),
+          ],
+        },
+      ],
+    });
+
+    expect(await page.locator('.lead').textContent()).toBe(
+      'Also 1 not captured.',
     );
   });
 
-  test('the sentence under the headline counts the other screens in Japanese', async () => {
-    const page = await open(MIXED, MIXED_IMAGES, 'ja-JP');
+  test('a component with one story unchanged and another left out is counted once, as unchanged', async () => {
+    const screen = componentScreen('Card');
+    const page = await open({
+      ...CLEAN,
+      unchanged: [
+        { screen, variants: [variant('0-card', { story: 'Default' })] },
+      ],
+      skipped: [
+        {
+          screen,
+          variants: [variant('1-card', { story: 'Loading' })],
+          reason: 'parameters.vrt.skip is set',
+        },
+      ],
+    });
 
+    expect(await page.locator('.lead').textContent()).toBe('1 unchanged.');
+  });
+
+  async function timesLine(
+    beforeAt: string,
+    afterAt: string,
+    locale: string,
+    timezoneId = 'UTC',
+  ): Promise<string> {
+    const page = await open(
+      { ...CLEAN, beforeAt, afterAt },
+      new Map(),
+      locale,
+      timezoneId,
+    );
+    return (await page.locator('.eyebrow').textContent()) ?? '';
+  }
+
+  test.each([
+    {
+      what: 'on one day as clocks',
+      beforeAt: '2026-11-23T10:02:00.000Z',
+      afterAt: '2026-11-23T10:15:00.000Z',
+      en: 'Before 10:02 · After 10:15',
+      ja: '変更前 10:02 · 変更後 10:15',
+    },
+    {
+      what: 'on two days with their dates',
+      beforeAt: '2026-11-23T10:02:00.000Z',
+      afterAt: '2026-11-24T10:15:00.000Z',
+      en: 'Before Nov 23 10:02 · After Nov 24 10:15',
+      ja: '変更前 11月23日 10:02 · 変更後 11月24日 10:15',
+    },
+    {
+      what: 'in the morning without a leading zero',
+      beforeAt: '2026-11-23T08:00:00.000Z',
+      afterAt: '2026-11-23T08:05:00.000Z',
+      en: 'Before 8:00 · After 8:05',
+      ja: '変更前 8:00 · 変更後 8:05',
+    },
+    {
+      what: 'that cannot be read as given',
+      beforeAt: 'yesterday',
+      afterAt: '2026-11-24T10:15:00.000Z',
+      en: 'Before yesterday · After Nov 24 10:15',
+      ja: '変更前 yesterday · 変更後 11月24日 10:15',
+    },
+  ])(
+    'the line above the headline gives the times of Before and After $what',
+    async ({ beforeAt, afterAt, en, ja }) => {
+      expect([
+        await timesLine(beforeAt, afterAt, 'en-US'),
+        await timesLine(beforeAt, afterAt, 'ja-JP'),
+      ]).toStrictEqual([en, ja]);
+    },
+  );
+
+  test('Before and After on one local day but two UTC days are given as clocks', async () => {
     expect(
-      await page
-        .getByText(
-          '撮影できなかった画面 1、変更前の時点で不安定だった箇所だけが変わった画面 1、変わらなかった画面 1、スキップした画面 1',
-          { exact: true },
-        )
-        .isVisible(),
-    ).toBe(true);
+      await timesLine(
+        '2026-11-23T23:30:00.000Z',
+        '2026-11-24T00:10:00.000Z',
+        'en-US',
+        'Asia/Tokyo',
+      ),
+    ).toBe('Before 8:30 · After 9:10');
   });
 
   test('a Japanese report declares its language', async () => {
@@ -609,52 +881,62 @@ describe('renderReport in Chromium', () => {
     expect(await page.locator('html').getAttribute('lang')).toBe('ja');
   });
 
-  test('a capture error shows the screen, its conditions, the phase and the message', async () => {
+  test('what could not be captured shows its name, its variants, the phase and the message', async () => {
     const page = await open(MIXED, MIXED_IMAGES);
 
     expect(
       await page
-        .getByRole('region', { name: 'Could not capture' })
+        .getByRole('region', { name: 'Not captured' })
         .getByRole('article')
         .ariaSnapshot(),
     ).toBe(
       [
         '- article:',
-        '  - heading "http://127.0.0.1:5173/admin" [level=3]',
-        '  - paragraph: 1280×720 · Failed while capturing After',
+        '  - heading "Admin" [level=3]',
+        '  - paragraph: 1280px wide · Failed while capturing After',
         '  - paragraph: net::ERR_CONNECTION_REFUSED at http://127.0.0.1:5173/admin',
       ].join('\n'),
     );
   });
 
-  test('a change seen at several viewports lists them once and says it is the same', async () => {
-    const page = await open(MIXED, MIXED_IMAGES);
-    const home = card(page, HOME);
+  test('what could not be captured reads in Japanese', async () => {
+    const page = await open(MIXED, MIXED_IMAGES, 'ja-JP');
 
     expect(
-      await home.getByRole('heading', { level: 3 }).allInnerTexts(),
-    ).toStrictEqual(['1280×720 and 375×812']);
-    expect(
-      await home
-        .getByText('The same change appears in each of these.', { exact: true })
-        .isVisible(),
-    ).toBe(true);
+      await page
+        .getByRole('region', { name: '撮影できなかったもの' })
+        .getByRole('paragraph')
+        .first()
+        .textContent(),
+    ).toBe('幅 1280px · 変更後の撮影で失敗');
   });
 
-  test('a change at two stories and two settings names each story and setting once', async () => {
-    const mobile = { viewport: { width: 375, height: 812 } };
+  test('a change seen at several viewports lists them once', async () => {
+    const page = await open(MIXED, MIXED_IMAGES);
+
+    expect(
+      await card(page, HOME).getByRole('heading', { level: 3 }).allInnerTexts(),
+    ).toStrictEqual(['1280px and 375px wide']);
+  });
+
+  const DESKTOP = { width: 1280, height: 720 };
+  const TABLET = { width: 768, height: 1024 };
+  const MOBILE = { width: 375, height: 812 };
+  const TALL = { width: 1280, height: 900 };
+
+  async function sameChangeNote(
+    viewports: Array<Variant['viewport']>,
+    locale: string,
+  ): Promise<string> {
     const page = await open(
-      changedRun('run-stories', [
+      changedRun('run-same', [
         {
-          screen: componentScreen('Button'),
+          screen: urlScreen(HOME),
           changes: [
             {
-              variants: [
-                variant('0-primary', { story: 'Primary' }),
-                variant('1-primary', { story: 'Primary', ...mobile }),
-                variant('2-secondary', { story: 'Secondary' }),
-                variant('3-secondary', { story: 'Secondary', ...mobile }),
-              ],
+              variants: viewports.map((viewport, index) =>
+                variant(`${index}-home`, { viewport }),
+              ),
               crops: [CROP],
               fullPage: false,
               marks: [],
@@ -662,13 +944,175 @@ describe('renderReport in Chromium', () => {
           ],
         },
       ]),
+      new Map(),
+      locale,
     );
+    return (await card(page, HOME).locator('.note').textContent()) ?? '';
+  }
+
+  test.each([
+    {
+      count: 2,
+      viewports: [DESKTOP, MOBILE],
+      en: 'Both changed the same way.',
+      ja: 'どちらも同じ変わり方です',
+    },
+    {
+      count: 3,
+      viewports: [DESKTOP, TABLET, MOBILE],
+      en: 'They all changed the same way.',
+      ja: 'どれも同じ変わり方です',
+    },
+  ])(
+    'a change seen at $count viewports says they changed the same way',
+    async ({ viewports, en, ja }) => {
+      expect([
+        await sameChangeNote(viewports, 'en-US'),
+        await sameChangeNote(viewports, 'ja-JP'),
+      ]).toStrictEqual([en, ja]);
+    },
+  );
+
+  test('a Japanese report describes each image by its kind, name and detail', async () => {
+    const page = await open(MIXED, MIXED_IMAGES, 'ja-JP');
 
     expect(
-      await card(page, 'Button')
+      await page
+        .getByRole('img')
+        .evaluateAll((images) =>
+          images.map((image) => image.getAttribute('alt')),
+        ),
+    ).toStrictEqual([
+      '変更前：Home',
+      '変更後：Home',
+      '変更前：Button、ページ全体',
+      '変更後：Button、ページ全体',
+    ]);
+  });
+
+  async function changeHeading(
+    screen: Screen,
+    variants: Variant[],
+    locale: string,
+  ): Promise<string> {
+    const page = await open(
+      changedRun('run-heading', [
+        {
+          screen,
+          changes: [{ variants, crops: [CROP], fullPage: false, marks: [] }],
+        },
+      ]),
+      new Map(),
+      locale,
+    );
+    return (
+      (await card(page, screen.label)
         .getByRole('heading', { level: 3 })
-        .textContent(),
-    ).toBe('Primary and Secondary · 1280×720 and 375×812');
+        .textContent()) ?? ''
+    );
+  }
+
+  test.each([
+    {
+      what: 'three widths',
+      screen: urlScreen(HOME),
+      variants: [
+        variant('0', { viewport: DESKTOP }),
+        variant('1', { viewport: TABLET }),
+        variant('2', { viewport: MOBILE }),
+      ],
+      en: '1280px, 768px and 375px wide',
+      ja: '幅 1280px、768px、375px',
+    },
+    {
+      what: 'two heights at one width',
+      screen: urlScreen(HOME),
+      variants: [
+        variant('0', { viewport: DESKTOP }),
+        variant('1', { viewport: TALL }),
+      ],
+      en: '1280×720 and 1280×900',
+      ja: '1280×720 と 1280×900',
+    },
+    {
+      what: 'two heights at one width and another width',
+      screen: urlScreen(HOME),
+      variants: [
+        variant('0', { viewport: DESKTOP }),
+        variant('1', { viewport: TALL }),
+        variant('2', { viewport: MOBILE }),
+      ],
+      en: '1280×720, 1280×900 and 375px wide',
+      ja: '1280×720、1280×900、幅 375px',
+    },
+    {
+      what: 'the dark color scheme',
+      screen: urlScreen(HOME),
+      variants: [variant('0', { colorScheme: 'dark' })],
+      en: '1280px wide, dark mode',
+      ja: '幅 1280px、ダークモード',
+    },
+    {
+      what: 'both color schemes',
+      screen: urlScreen(HOME),
+      variants: [variant('0'), variant('1', { colorScheme: 'dark' })],
+      en: '1280px wide, light and dark mode',
+      ja: '幅 1280px、ライトモードとダークモード',
+    },
+    {
+      what: 'a story in dark mode',
+      screen: componentScreen('Button'),
+      variants: [variant('0', { story: 'Primary', colorScheme: 'dark' })],
+      en: 'Primary (1280px wide, dark mode)',
+      ja: 'Primary（幅 1280px、ダークモード）',
+    },
+    {
+      what: 'two stories at two widths',
+      screen: componentScreen('Button'),
+      variants: [
+        variant('0', { story: 'Primary' }),
+        variant('1', { story: 'Primary', viewport: MOBILE }),
+        variant('2', { story: 'Secondary' }),
+        variant('3', { story: 'Secondary', viewport: MOBILE }),
+      ],
+      en: 'Primary and Secondary (1280px and 375px wide)',
+      ja: 'Primary と Secondary（幅 1280px と 375px）',
+    },
+    {
+      what: 'two stories at a width each',
+      screen: componentScreen('Button'),
+      variants: [
+        variant('0', { story: 'Primary' }),
+        variant('1', { story: 'Secondary', viewport: MOBILE }),
+      ],
+      en: 'Primary (1280px wide) and Secondary (375px wide)',
+      ja: 'Primary（幅 1280px）、Secondary（幅 375px）',
+    },
+    {
+      what: 'two stories in a color scheme each',
+      screen: componentScreen('Button'),
+      variants: [
+        variant('0', { story: 'Primary' }),
+        variant('1', { story: 'Secondary', colorScheme: 'dark' }),
+      ],
+      en: 'Primary (1280px wide) and Secondary (1280px wide, dark mode)',
+      ja: 'Primary（幅 1280px）、Secondary（幅 1280px、ダークモード）',
+    },
+    {
+      what: 'a width in each color scheme',
+      screen: urlScreen(HOME),
+      variants: [
+        variant('0'),
+        variant('1', { viewport: MOBILE, colorScheme: 'dark' }),
+      ],
+      en: '1280px wide and 375px wide (dark mode)',
+      ja: '幅 1280px、幅 375px（ダークモード）',
+    },
+  ])('a change heading names $what', async ({ screen, variants, en, ja }) => {
+    expect([
+      await changeHeading(screen, variants, 'en-US'),
+      await changeHeading(screen, variants, 'ja-JP'),
+    ]).toStrictEqual([en, ja]);
   });
 
   test('a warning carried by two merged variants appears once', async () => {
@@ -697,12 +1141,15 @@ describe('renderReport in Chromium', () => {
 
     expect(
       await card(page, HOME).getByRole('listitem').allInnerTexts(),
-    ).toStrictEqual(['Warning: Vite reported an error on another page']);
+    ).toStrictEqual(['Note: Vite reported an error on another page']);
   });
 
-  test('a change that resized the page names both page sizes', async () => {
+  async function pageSizeNote(
+    dimensions: Dimensions,
+    locale: string,
+  ): Promise<string> {
     const page = await open(
-      changedRun('run-taller', [
+      changedRun('run-resized', [
         {
           screen: urlScreen(HOME),
           changes: [
@@ -711,29 +1158,47 @@ describe('renderReport in Chromium', () => {
               crops: [CROP],
               fullPage: false,
               marks: [],
-              dimensions: { before: [1280, 1000], after: [1280, 1600] },
+              dimensions,
             },
           ],
         },
       ]),
+      new Map(),
+      locale,
     );
+    return (await card(page, HOME).locator('.note').textContent()) ?? '';
+  }
 
-    expect(
-      await card(page, HOME)
-        .getByText('Page size 1280×1000 → 1280×1600', { exact: true })
-        .isVisible(),
-    ).toBe(true);
-  });
+  test.each<{ what: string; dimensions: Dimensions; en: string; ja: string }>([
+    {
+      what: 'height',
+      dimensions: { before: [1280, 720], after: [1280, 1100] },
+      en: 'The page height changed from 720px to 1100px.',
+      ja: 'ページの高さが 720px から 1100px に変わりました',
+    },
+    {
+      what: 'size',
+      dimensions: { before: [1280, 720], after: [1000, 1000] },
+      en: 'The page size changed from 1280×720 to 1000×1000.',
+      ja: 'ページの大きさが 1280×720 から 1000×1000 に変わりました',
+    },
+  ])(
+    'a change that resized the page tells how its $what changed',
+    async ({ dimensions, en, ja }) => {
+      expect([
+        await pageSizeNote(dimensions, 'en-US'),
+        await pageSizeNote(dimensions, 'ja-JP'),
+      ]).toStrictEqual([en, ja]);
+    },
+  );
 
-  test('a story change names the story and the dark scheme under a Storybook tag', async () => {
+  test('a story change shows a Storybook tag', async () => {
     const page = await open(MIXED, MIXED_IMAGES);
-    const button = card(page, 'Button');
 
-    expect(await button.getByRole('heading', { level: 3 }).textContent()).toBe(
-      'Primary · 1280×720 dark',
-    );
     expect(
-      await button.getByText('Storybook', { exact: true }).isVisible(),
+      await card(page, 'Button')
+        .getByText('Storybook', { exact: true })
+        .isVisible(),
     ).toBe(true);
   });
 
@@ -860,29 +1325,38 @@ describe('renderReport in Chromium', () => {
     expect(after.y).toBeGreaterThan(before.y + before.height);
   });
 
-  test('each area of a change with two crops is numbered', async () => {
-    const page = await open(
-      changedRun('run-two-areas', [
-        {
-          screen: urlScreen(HOME),
-          changes: [
-            {
-              variants: [variant('0-home')],
-              crops: [CROP, { ...CROP, box: { ...CROP.box, y: 400 } }],
-              fullPage: false,
-              marks: [],
-            },
-          ],
-        },
-      ]),
-    );
+  test.each([
+    { locale: 'en-US', labels: ['Spot 1 of 2', 'Spot 2 of 2'] },
+    {
+      locale: 'ja-JP',
+      labels: ['1 か所目（全 2 か所）', '2 か所目（全 2 か所）'],
+    },
+  ])(
+    'each spot of a change with two crops is numbered in $locale',
+    async ({ locale, labels }) => {
+      const page = await open(
+        changedRun('run-two-areas', [
+          {
+            screen: urlScreen(HOME),
+            changes: [
+              {
+                variants: [variant('0-home')],
+                crops: [CROP, { ...CROP, box: { ...CROP.box, y: 400 } }],
+                fullPage: false,
+                marks: [],
+              },
+            ],
+          },
+        ]),
+        new Map(),
+        locale,
+      );
 
-    expect(
-      await card(page, HOME)
-        .getByText(/^Area \d of \d$/)
-        .allInnerTexts(),
-    ).toStrictEqual(['Area 1 of 2', 'Area 2 of 2']);
-  });
+      expect(
+        await card(page, HOME).locator('.area-label').allInnerTexts(),
+      ).toStrictEqual(labels);
+    },
+  );
 
   test('a transparent part of a crop shows a checkerboard', async () => {
     const page = await open(
@@ -932,6 +1406,16 @@ describe('renderReport in Chromium', () => {
     const page = await open(MIXED, MIXED_IMAGES);
 
     expect(await card(page, HOME).locator('details img').count()).toBe(0);
+  });
+
+  test('View full page reads Close while the full page is open', async () => {
+    const page = await open(MIXED, MIXED_IMAGES);
+
+    const home = await openFullPage(page, HOME);
+
+    expect(await home.locator('summary').allInnerTexts()).toStrictEqual([
+      'Close',
+    ]);
   });
 
   test('opening View full page offers side by side, slider and diff, side by side first', async () => {
@@ -1068,7 +1552,7 @@ describe('renderReport in Chromium', () => {
       .poll(() =>
         page
           .getByRole('img', {
-            name: `Differences between the two Before loads: ${NEWS}`,
+            name: `Difference between the two Before loads: ${NEWS}`,
             exact: true,
           })
           .isVisible(),
@@ -1076,15 +1560,12 @@ describe('renderReport in Chromium', () => {
       .toBe(true);
   });
 
-  test('a run where nothing changed or failed says so and shows no cards', async () => {
+  test('a run where nothing changed or failed shows no cards', async () => {
     const page = await open(
       CLEAN,
       new Map([['0-about', { before: PAGE_BEFORE, after: PAGE_BEFORE }]]),
     );
 
-    expect(await page.getByRole('heading', { level: 1 }).textContent()).toBe(
-      'No screens changed',
-    );
     expect(await page.getByRole('article').count()).toBe(0);
   });
 

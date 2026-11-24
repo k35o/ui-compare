@@ -1,13 +1,12 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { cac } from 'cac';
 
 import { runAfter, runBefore, shotsWithBefore } from './commands.ts';
 import { UsageError } from './errors.ts';
-import { screenOf } from './review.ts';
+import { screensOf } from './review.ts';
 import type { Change, Review, Screen, Variant } from './review.ts';
 import { REPORT_FILE, SUMMARY_FILE } from './store.ts';
 import type {
@@ -50,23 +49,25 @@ async function beforeCommand(
     masks: list(options.mask, 'mask'),
     cwd,
   });
-  print(formatBefore(run, cwd));
+  print(formatBefore(run));
   return run.before.some((shot) => shot.status === 'error') ? 1 : 0;
 }
 
 async function afterCommand(id: string): Promise<number> {
   const cwd = process.cwd();
   const { dir, summary, review, report } = await runAfter({ id, cwd });
-  print(formatAfter(summary, review, report, relative(cwd, dir), cwd));
+  print(formatAfter(summary, review, report, relative(cwd, dir)));
   return summary.counts.error > 0 ? 1 : 0;
 }
 
-function formatBefore(run: RunFile, cwd: string): string[] {
+function formatBefore(run: RunFile): string[] {
   const rows: Row[] = [];
   const groups = new Map<string, Row>();
   const screens = new Set<string>();
+  const screenByShot = screensOf(run.shots, run.before);
   for (const { shot, before } of shotsWithBefore(run)) {
-    const screen = screenOf(shot.target);
+    const screen = screenByShot.get(shot.key);
+    if (screen === undefined) throw new Error(`Shot ${shot.key} has no screen`);
     screens.add(screen.key);
     if (before.status === 'captured' && before.unstable) {
       rows.push({
@@ -100,7 +101,7 @@ function formatBefore(run: RunFile, cwd: string): string[] {
   }
   return [
     `Captured Before for run ${run.id}: ${plural(screens.size, 'screen')}, ${plural(run.shots.length, 'shot')}`,
-    ...rows.flatMap((row) => entryLines(BEFORE_STATUS_WIDTH, row, cwd)),
+    ...rows.flatMap((row) => entryLines(BEFORE_STATUS_WIDTH, row)),
     `Next: make the change, then run: ui-compare after ${run.id}`,
   ];
 }
@@ -110,20 +111,19 @@ function formatAfter(
   review: Review,
   report: 'file' | 'pane',
   dir: string,
-  cwd: string,
 ): string[] {
   const results = new Map(
     summary.shots.map((result) => [result.shot.key, result]),
   );
   const row = (status: string, entry: Entry, detail?: string) =>
-    entryLines(AFTER_STATUS_WIDTH, { status, ...entry, detail }, cwd);
+    entryLines(AFTER_STATUS_WIDTH, { status, ...entry, detail });
   return [
     `Compared run ${review.id}: ${plural(review.changed.length, 'screen')} changed, ${plural(summary.counts.error, 'error')}`,
     ...review.errors.flatMap(({ screen, variants, phase, message }) =>
       row('error', { screen, variants }, `${phase}: ${message}`),
     ),
     ...review.changed.flatMap(({ screen, changes }) => [
-      `  ${'changed'.padEnd(AFTER_STATUS_WIDTH)}${screenName(screen, cwd)}${screen.kind === 'component' ? ' (Storybook)' : ''}`,
+      `  ${'changed'.padEnd(AFTER_STATUS_WIDTH)}${screen.label}${screen.kind === 'component' ? ' (Storybook)' : ''}`,
       ...changes.flatMap((change) => changeLines(change, results, dir)),
     ]),
     ...review.noise.flatMap((entry) =>
@@ -141,12 +141,11 @@ function formatAfter(
 function entryLines(
   width: number,
   { status, screen, variants, detail }: Row,
-  cwd: string,
 ): string[] {
   const lines: string[] = [];
   for (const { stories, settings, warnings } of partition(variants)) {
     const columns = [
-      `  ${status.padEnd(width)}${screenName(screen, cwd)}${stories.length > 0 ? `: ${stories.join(', ')}` : ''}`,
+      `  ${status.padEnd(width)}${screen.label}${stories.length > 0 ? `: ${stories.join(', ')}` : ''}`,
       settings.join(', '),
     ];
     if (detail !== undefined) columns.push(detail);
@@ -224,12 +223,6 @@ function variantOf(
     : { shotKey: key, viewport, colorScheme, warnings };
 }
 
-function screenName({ kind, label }: Screen, cwd: string): string {
-  return kind === 'url' && label.startsWith('file:')
-    ? relative(cwd, fileURLToPath(label))
-    : label;
-}
-
 function setting({ viewport, colorScheme }: Variant): string {
   return `${viewport.width}x${viewport.height}${colorScheme === 'dark' ? ' dark' : ''}`;
 }
@@ -293,7 +286,7 @@ async function main(argv: string[]): Promise<number> {
   cli
     .command(
       'before [...targets]',
-      'Capture the Before shots of URLs, HTML files and Storybook stories, and print the run id',
+      'Capture the Before shots of URLs, HTML files and Storybook stories, and print the run id. Name a target as name=target',
     )
     .option(
       '--storybook <url>',
@@ -301,7 +294,7 @@ async function main(argv: string[]): Promise<number> {
     )
     .option(
       '--story <pattern>',
-      'Story id or glob over story files (repeatable; default: every story)',
+      'Story id or glob over story files, optionally as name=pattern for one component (repeatable; default: every story)',
     )
     .option('--viewport <WxH>', 'Viewport size (repeatable; default: 1280x720)')
     .option(
@@ -313,10 +306,10 @@ async function main(argv: string[]): Promise<number> {
       'CSS selector to paint over in every shot (repeatable)',
     )
     .example(
-      '  ui-compare before http://localhost:5173/ http://localhost:5173/settings',
+      '  ui-compare before "Pricing page=http://localhost:5173/pricing" "Settings page=./dist/settings.html"',
     )
     .example(
-      '  ui-compare before --storybook http://localhost:6006 --story "src/components/**"',
+      '  ui-compare before --storybook http://localhost:6006 --story "Button=src/components/Button.stories.tsx"',
     )
     .action(beforeCommand);
   cli
