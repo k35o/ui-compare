@@ -1,0 +1,6 @@
+ui-compare@0.1.0:
+  dir: ""
+  intents:
+    - calm-panes-glow
+    - named-targets-speak
+    - quiet-ducks-tease
