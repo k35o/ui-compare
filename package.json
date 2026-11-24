@@ -1,6 +1,6 @@
 {
   "name": "ui-compare",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Capture pages and Storybook stories before and after a UI change, and compare them in one HTML report.",
   "keywords": [
     "ai-agent",
