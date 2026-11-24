@@ -10,7 +10,17 @@ export default defineConfig({
   },
   lint: {
     extends: [typescript],
-    ignorePatterns: ['CHANGELOG.md', '.changeset'],
+    // The Claude Code plugin is typed against the engine's 'claude-code'
+    // declarations, which the engine writes into plugin/.claude-plugin/types/
+    // only when it loads the plugin, and its tests run on `claude plugin test`,
+    // not Vitest; type-aware lint can resolve neither.
+    ignorePatterns: [
+      'CHANGELOG.md',
+      '.changeset',
+      'plugin/hooks',
+      'plugin/tests',
+      'plugin/types',
+    ],
     options: {
       typeAware: true,
     },

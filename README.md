@@ -19,6 +19,14 @@ To let a coding agent drive it, install the bundled [agent skill](plugin/skills/
 gh skill install k35o/ui-compare
 ```
 
+In Claude Code, install the plugin instead. It carries the same skill and adds [the pane](#the-claude-code-pane):
+
+```
+/plugin install ui-compare --marketplace k35o/ui-compare
+```
+
+In the Claude Code Desktop app, click + next to the prompt box, then Plugins, Add marketplace with `k35o/ui-compare`, then Add plugin.
+
 ## Usage
 
 ```sh
@@ -111,6 +119,17 @@ Each run lives in `.ui-compare/<id>/` under the current directory. The folder ca
 
 The page is in Japanese when the browser language is Japanese, and in English otherwise.
 
+### The Claude Code pane
+
+With the plugin installed, Claude Code Desktop shows the report in a pane beside the conversation instead of writing `report.html`:
+
+- The pane opens by itself whenever an `after` run finishes. When the window is too narrow to fit it, or another pane is in front, a notice appears instead; open the pane with `/ui-compare-pane`.
+- It holds what the report holds, top to bottom. Each changed area is cropped with Before above After. **View full page** shows the After page with the changed areas outlined; point at it to see Before.
+- **Not intended** on a change adds a note about that change, with its image paths, to your prompt. Add your own words and send it to have the agent fix it.
+- The pane follows Claude Code's `language` setting: Japanese when it is Japanese, English otherwise.
+
+While the desktop app is attached to the session, `ui-compare after` prints `Report:  shown in the ui-compare pane in Claude Code` and writes no `report.html`, even if you closed the pane; `/ui-compare-pane` shows the latest run again. In the terminal and every other agent, the report is written as usual.
+
 ## How shots are taken
 
 - Every shot gets a fresh Chromium context with the requested viewport and color scheme, reduced motion, and CSS animations and the caret disabled.
@@ -132,6 +151,8 @@ pnpm test
 pnpm build            # vp pack -> dist/
 pnpm skill:validate   # validate plugin/skills/ui-compare against agentskills.io
 ```
+
+The Claude Code plugin lives in `plugin/`: the pane is a hooks module (`plugin/hooks/`) with its own tests, which `claude plugin test plugin` runs, and `claude plugin validate plugin` checks.
 
 ## Release
 

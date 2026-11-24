@@ -1,0 +1,9 @@
+{
+  "name": "ui-compare",
+  "description": "Shows ui-compare's before/after review of a UI change in a pane beside the chat, and ships the agent skill that runs the before/after loop.",
+  "author": { "name": "k8o" },
+  "license": "MIT",
+  "homepage": "https://github.com/k35o/ui-compare",
+  "repository": "https://github.com/k35o/ui-compare",
+  "types": "./types/index.d.ts"
+}

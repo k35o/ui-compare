@@ -12,3 +12,4 @@ coverage
 settings.local.json
 .vitest/
 .ui-compare/
+plugin/.claude-plugin/types/

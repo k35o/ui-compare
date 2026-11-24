@@ -1,0 +1,12 @@
+{
+  "name": "ui-compare",
+  "description": "ui-compare for Claude Code: before/after screenshots of a UI change, reviewed in a pane beside the chat.",
+  "owner": { "name": "k35o" },
+  "plugins": [
+    {
+      "name": "ui-compare",
+      "source": "./plugin",
+      "description": "Review a UI change before and after in a Claude Code pane, with the agent skill that captures and compares the screens."
+    }
+  ]
+}

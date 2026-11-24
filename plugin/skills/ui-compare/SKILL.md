@@ -6,7 +6,7 @@ license: MIT
 
 # ui-compare
 
-`ui-compare before` screenshots pages and Storybook stories and prints a run id. `ui-compare after <id>` screenshots the same targets again, compares them with the Before shots, and writes a self-contained `report.html` for the user plus `summary.json` (per shot, with the changed areas in `regions`) for you. Before must be captured **before you edit anything**: once the code has changed, the old rendering cannot be captured anymore.
+`ui-compare before` screenshots pages and Storybook stories and prints a run id. `ui-compare after <id>` screenshots the same targets again, compares them with the Before shots, and writes a self-contained `report.html` for the user (or, in Claude Code with the ui-compare plugin, shows the report in a pane) plus `summary.json` (per shot, with the changed areas in `regions`) for you. Before must be captured **before you edit anything**: once the code has changed, the old rendering cannot be captured anymore.
 
 ## Workflow
 
@@ -59,7 +59,14 @@ Compared run 3k9x2a: 1 screen changed, 0 errors
 
 ### 4. Show the result to the user
 
-Give the user the path of `.ui-compare/<id>/report.html` and say what changed, what did not, and anything unexpected. The report is one page per run: capture errors, then a card per changed screen with each changed area cropped from Before and After side by side, then one line each for noise, unchanged and skipped screens. It follows the browser language (Japanese or English) and is a single file with its images embedded, so it can be opened directly or attached.
+Say what changed, what did not, and anything unexpected, and point the user to the report:
+
+- If the output says `Report:  shown in the ui-compare pane in Claude Code`, the report is in the ui-compare pane beside the conversation in Claude Code, and no `report.html` was written. Tell the user to look at the pane instead of giving a path; `/ui-compare-pane` opens the pane if it is not open.
+- Otherwise, give the user the path of `.ui-compare/<id>/report.html`.
+
+The report is one page per run: capture errors, then a card per changed screen with each changed area cropped from Before and After side by side, then one line each for noise, unchanged and skipped screens. It follows the browser language (Japanese or English) and is a single file with its images embedded, so it can be opened directly or attached. The pane shows the same content.
+
+Each change in the pane has a **Not intended** button. It drafts a message into the user's prompt that names the run id, the screen, the change's conditions and changed areas, and the paths of its diff and After images; the user adds their own words and sends it. Such a message asks you to undo or fix exactly that change and nothing else: look at the images it names, change the code, then run `after` with the same id again.
 
 ## Exit codes
 
