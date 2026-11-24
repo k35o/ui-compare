@@ -29,7 +29,11 @@ export type CaptureOutcome =
   | { status: 'skipped'; reason: string }
   | { status: 'error'; message: string };
 
-export type Unstable = { mismatchRatio: number; bbox: Box | null };
+export type Unstable = {
+  mismatchRatio: number;
+  bbox: Box | null;
+  regions: Box[];
+};
 
 export type BeforeShot =
   | { key: string; status: 'captured'; warnings: string[]; unstable?: Unstable }
@@ -51,6 +55,7 @@ export type ShotDiff = {
   mismatchedPixels: number;
   mismatchRatio: number;
   bbox: Box | null;
+  regions: Box[];
   dimensions?: {
     before: [width: number, height: number];
     after: [width: number, height: number];

@@ -7,21 +7,29 @@ import { cac } from 'cac';
 
 import { runAfter, runBefore, shotsWithBefore } from './commands.ts';
 import { UsageError } from './errors.ts';
-import { REPORT_FILE, runDir, SUMMARY_FILE } from './store.ts';
+import { screenOf } from './review.ts';
+import type { Change, Review, Screen, Variant } from './review.ts';
+import { REPORT_FILE, SUMMARY_FILE } from './store.ts';
 import type {
   Box,
   RunFile,
   Shot,
-  ShotDiff,
+  ShotResult,
   Summary,
-  Target,
   Unstable,
 } from './types.ts';
 
 type Options = Record<string, unknown>;
 
+type Entry = { screen: Screen; variants: Variant[] };
+
+type Row = Entry & { status: string; detail: string | undefined };
+
+type Part = { stories: string[]; settings: string[]; warnings: string[] };
+
 const BEFORE_STATUS_WIDTH = 'unstable'.length + 2;
 const AFTER_STATUS_WIDTH = 'unchanged'.length + 2;
+const LISTED_AREAS = 3;
 
 const { version } = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
@@ -48,102 +56,189 @@ async function beforeCommand(
 
 async function afterCommand(id: string): Promise<number> {
   const cwd = process.cwd();
-  const summary = await runAfter({ id, cwd });
-  print(formatAfter(summary, cwd));
+  const { dir, summary, review } = await runAfter({ id, cwd });
+  print(formatAfter(summary, review, relative(cwd, dir), cwd));
   return summary.counts.error > 0 ? 1 : 0;
 }
 
 function formatBefore(run: RunFile, cwd: string): string[] {
-  const lines = [
-    `Captured Before for run ${run.id} (${plural(run.shots.length, 'shot')})`,
-  ];
+  const rows: Row[] = [];
+  const groups = new Map<string, Row>();
+  const screens = new Set<string>();
   for (const { shot, before } of shotsWithBefore(run)) {
-    if (before.status === 'captured') {
-      lines.push(
-        before.unstable
-          ? shotLine('unstable', BEFORE_STATUS_WIDTH, shot, cwd, [
-              `${describeUnstable(before.unstable)}; mask it with --mask and run before again`,
-            ])
-          : shotLine('ok', BEFORE_STATUS_WIDTH, shot, cwd, []),
-        ...warningLines(before.warnings),
-      );
-    } else if (before.status === 'skipped') {
-      lines.push(
-        shotLine('skipped', BEFORE_STATUS_WIDTH, shot, cwd, [before.reason]),
-      );
+    const screen = screenOf(shot.target);
+    screens.add(screen.key);
+    if (before.status === 'captured' && before.unstable) {
+      rows.push({
+        status: 'unstable',
+        screen,
+        variants: [variantOf(shot, before.warnings)],
+        detail: `${describeUnstable(before.unstable)}; mask it with --mask and run before again`,
+      });
     } else {
-      lines.push(
-        shotLine('error', BEFORE_STATUS_WIDTH, shot, cwd, [before.message]),
+      const row: Row =
+        before.status === 'captured'
+          ? { status: 'ok', screen, variants: [], detail: undefined }
+          : {
+              status: before.status,
+              screen,
+              variants: [],
+              detail:
+                before.status === 'skipped' ? before.reason : before.message,
+            };
+      const key = JSON.stringify([screen.key, row.status, row.detail ?? null]);
+      let group = groups.get(key);
+      if (group === undefined) {
+        group = row;
+        groups.set(key, group);
+        rows.push(group);
+      }
+      group.variants.push(
+        variantOf(shot, before.status === 'captured' ? before.warnings : []),
       );
     }
   }
-  lines.push(`Next: make the change, then run: ui-compare after ${run.id}`);
-  return lines;
+  return [
+    `Captured Before for run ${run.id}: ${plural(screens.size, 'screen')}, ${plural(run.shots.length, 'shot')}`,
+    ...rows.flatMap((row) => entryLines(BEFORE_STATUS_WIDTH, row, cwd)),
+    `Next: make the change, then run: ui-compare after ${run.id}`,
+  ];
 }
 
-function formatAfter(summary: Summary, cwd: string): string[] {
-  const { id, counts } = summary;
-  const dir = relative(cwd, runDir(cwd, id));
-  const lines = [
-    `Compared run ${id}: ${counts.changed} changed, ${counts.unchanged} unchanged, ${plural(counts.error, 'error')}, ${counts.skipped} skipped`,
-  ];
-  for (const result of summary.shots) {
-    const details: string[] = [];
-    if (result.diff) details.push(describeDiff(result.diff));
-    if (result.files.diff) details.push(join(dir, result.files.diff));
-    if (result.error) {
-      details.push(`${result.error.phase}: ${result.error.message}`);
-    }
-    if (result.skipReason !== undefined) details.push(result.skipReason);
-    lines.push(
-      shotLine(result.status, AFTER_STATUS_WIDTH, result.shot, cwd, details),
-    );
-    if (result.unstable) {
-      lines.push(
-        `    unstable in Before: ${describeUnstable(result.unstable)}`,
-      );
-    }
-    lines.push(...warningLines(result.warnings));
-  }
-  lines.push(
+function formatAfter(
+  summary: Summary,
+  review: Review,
+  dir: string,
+  cwd: string,
+): string[] {
+  const results = new Map(
+    summary.shots.map((result) => [result.shot.key, result]),
+  );
+  const row = (status: string, entry: Entry, detail?: string) =>
+    entryLines(AFTER_STATUS_WIDTH, { status, ...entry, detail }, cwd);
+  return [
+    `Compared run ${review.id}: ${plural(review.changed.length, 'screen')} changed, ${plural(summary.counts.error, 'error')}`,
+    ...review.errors.flatMap(({ screen, variants, phase, message }) =>
+      row('error', { screen, variants }, `${phase}: ${message}`),
+    ),
+    ...review.changed.flatMap(({ screen, changes }) => [
+      `  ${'changed'.padEnd(AFTER_STATUS_WIDTH)}${screenName(screen, cwd)}${screen.kind === 'component' ? ' (Storybook)' : ''}`,
+      ...changes.flatMap((change) => changeLines(change, results, dir)),
+    ]),
+    ...review.noise.flatMap((entry) =>
+      row('noise', entry, 'changed only where it was unstable in Before'),
+    ),
+    ...review.unchanged.flatMap((entry) => row('unchanged', entry)),
+    ...review.skipped.flatMap((entry) => row('skipped', entry, entry.reason)),
     `Report:  ${join(dir, REPORT_FILE)}`,
     `Summary: ${join(dir, SUMMARY_FILE)}`,
-  );
+  ];
+}
+
+function entryLines(
+  width: number,
+  { status, screen, variants, detail }: Row,
+  cwd: string,
+): string[] {
+  const lines: string[] = [];
+  for (const { stories, settings, warnings } of partition(variants)) {
+    const columns = [
+      `  ${status.padEnd(width)}${screenName(screen, cwd)}${stories.length > 0 ? `: ${stories.join(', ')}` : ''}`,
+      settings.join(', '),
+    ];
+    if (detail !== undefined) columns.push(detail);
+    lines.push(columns.join('  '), ...warningLines(warnings, 4));
+  }
   return lines;
 }
 
-function shotLine(
-  status: string,
-  width: number,
-  shot: Shot,
-  cwd: string,
-  details: string[],
-): string {
-  const { target, viewport, colorScheme } = shot;
+function changeLines(
+  { variants, crops, fullPage, dimensions }: Change,
+  results: Map<string, ShotResult>,
+  dir: string,
+): string[] {
+  const [first] = variants;
+  const result = results.get(first?.shotKey ?? '');
+  if (
+    first === undefined ||
+    result?.diff === undefined ||
+    result.files.diff === undefined
+  ) {
+    throw new Error(`Changed shot ${first?.shotKey ?? ''} has no diff`);
+  }
+  const where = fullPage
+    ? 'changed across the page'
+    : describeAreas(crops.map(({ area }) => area));
+  const pageSize =
+    dimensions === undefined
+      ? ''
+      : `, page size ${dimensions.before.join('x')} -> ${dimensions.after.join('x')}`;
+  const whose = variants.length > 1 ? ` (in ${conditions([first])})` : '';
   return [
-    `  ${status.padEnd(width)}${describeTarget(target, cwd)}`,
-    `${viewport.width}x${viewport.height} ${colorScheme}`,
-    ...details,
-  ].join('  ');
+    `    ${conditions(variants)}: ${where}${pageSize}${whose}  ${join(dir, result.files.diff)}`,
+    ...warningLines(unique(variants.flatMap(({ warnings }) => warnings)), 6),
+  ];
 }
 
-function describeTarget(target: Target, cwd: string): string {
-  if (target.kind === 'story') return `${target.title} / ${target.name}`;
-  return target.url.startsWith('file:')
-    ? relative(cwd, fileURLToPath(target.url))
-    : target.url;
+function conditions(variants: Variant[]): string {
+  return partition(variants)
+    .map(({ stories, settings }) =>
+      [stories.join(', '), settings.join(', ')].filter(Boolean).join(' · '),
+    )
+    .join('; ');
+}
+
+// Stories that were captured at the same settings share one description, so
+// a group never claims a setting that one of its stories was not seen at.
+function partition(variants: Variant[]): Part[] {
+  const byStory = new Map<string | undefined, Variant[]>();
+  for (const variant of variants) {
+    const ofStory = byStory.get(variant.story) ?? [];
+    ofStory.push(variant);
+    byStory.set(variant.story, ofStory);
+  }
+  const parts = new Map<string, Part>();
+  for (const [story, ofStory] of byStory) {
+    const settings = unique(ofStory.map(setting));
+    const key = settings.join(', ');
+    const part = parts.get(key) ?? { stories: [], settings, warnings: [] };
+    parts.set(key, part);
+    if (story !== undefined) part.stories.push(story);
+    part.warnings = unique([
+      ...part.warnings,
+      ...ofStory.flatMap(({ warnings }) => warnings),
+    ]);
+  }
+  return [...parts.values()];
+}
+
+function variantOf(
+  { key, target, viewport, colorScheme }: Shot,
+  warnings: string[],
+): Variant {
+  return target.kind === 'story'
+    ? { shotKey: key, viewport, colorScheme, story: target.name, warnings }
+    : { shotKey: key, viewport, colorScheme, warnings };
+}
+
+function screenName({ kind, label }: Screen, cwd: string): string {
+  return kind === 'url' && label.startsWith('file:')
+    ? relative(cwd, fileURLToPath(label))
+    : label;
+}
+
+function setting({ viewport, colorScheme }: Variant): string {
+  return `${viewport.width}x${viewport.height}${colorScheme === 'dark' ? ' dark' : ''}`;
 }
 
 function describeUnstable({ mismatchRatio, bbox }: Unstable): string {
   return `differs between two loads${bbox ? ` at ${describeBox(bbox)}` : ''} (${percent(mismatchRatio)})`;
 }
 
-function describeDiff({ mismatchRatio, bbox, dimensions }: ShotDiff): string {
-  const where = bbox ? ` at ${describeBox(bbox)}` : '';
-  const size = dimensions
-    ? `, size ${dimensions.before.join('x')} -> ${dimensions.after.join('x')}`
-    : '';
-  return `${percent(mismatchRatio)}${where}${size}`;
+function describeAreas(regions: Box[]): string {
+  const listed = regions.slice(0, LISTED_AREAS).map(describeBox);
+  const more = regions.length - listed.length;
+  return `${plural(regions.length, 'area')} at ${[...listed, ...(more > 0 ? [`+${more} more`] : [])].join(', ')}`;
 }
 
 function describeBox({ x, y, width, height }: Box): string {
@@ -161,8 +256,12 @@ function plural(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? '' : 's'}`;
 }
 
-function warningLines(warnings: string[]): string[] {
-  return warnings.map((warning) => `    warning: ${warning}`);
+function warningLines(warnings: string[], indent: number): string[] {
+  return warnings.map((warning) => `${' '.repeat(indent)}warning: ${warning}`);
+}
+
+function unique(items: string[]): string[] {
+  return [...new Set(items)];
 }
 
 function print(lines: string[]): void {

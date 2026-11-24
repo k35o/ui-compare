@@ -3,7 +3,8 @@ import type { Capturer } from './capture.ts';
 import { comparePngs } from './compare.ts';
 import { UsageError } from './errors.ts';
 import { renderReport } from './report.ts';
-import type { ReportImages } from './report.ts';
+import { buildReview } from './review.ts';
+import type { Review, ShotImages } from './review.ts';
 import {
   clearAfter,
   createRun,
@@ -59,7 +60,7 @@ export async function runAfter({
 }: {
   id: string;
   cwd: string;
-}): Promise<Summary> {
+}): Promise<{ dir: string; summary: Summary; review: Review }> {
   const { dir, run } = await readRun(cwd, id);
   const pairs = shotsWithBefore(run);
   await clearAfter(dir);
@@ -78,8 +79,10 @@ export async function runAfter({
     shots,
   };
   await writeSummary(dir, summary);
-  await writeReport(dir, renderReport(summary, await readImages(dir, shots)));
-  return summary;
+  const images = await readImages(dir, shots);
+  const review = buildReview(summary, images);
+  await writeReport(dir, renderReport(review, images));
+  return { dir, summary, review };
 }
 
 export function shotsWithBefore(
@@ -109,7 +112,7 @@ async function captureBefore(
 
   await writeImage(dir, imageFile('before', key), first.png);
   const warnings = unique([...first.warnings, ...second.warnings]);
-  const { passed, diffPng, mismatchRatio, bbox } = comparePngs(
+  const { passed, diffPng, mismatchRatio, bbox, regions } = comparePngs(
     first.png,
     second.png,
   );
@@ -121,7 +124,7 @@ async function captureBefore(
     key,
     status: 'captured',
     warnings,
-    unstable: { mismatchRatio, bbox },
+    unstable: { mismatchRatio, bbox, regions },
   };
 }
 
@@ -211,8 +214,8 @@ function countStatuses(results: ShotResult[]): Record<ShotStatus, number> {
 async function readImages(
   dir: string,
   results: ShotResult[],
-): Promise<ReportImages> {
-  const images: ReportImages = new Map();
+): Promise<ShotImages> {
+  const images: ShotImages = new Map();
   for (const { shot, files } of results) {
     const set: Partial<Record<ImageKind, Buffer>> = {};
     for (const kind of IMAGE_KINDS) {

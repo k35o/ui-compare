@@ -11,14 +11,22 @@ import {
 } from 'vite-plus/test';
 
 import { renderReport } from '../src/report.ts';
-import type { ReportImages } from '../src/report.ts';
-import type { Shot, ShotResult, Summary } from '../src/types.ts';
+import type {
+  Crop,
+  Review,
+  Screen,
+  ShotImages,
+  Variant,
+} from '../src/review.ts';
 
-function png(
-  width: number,
-  height: number,
-  rgba: [number, number, number, number],
-): Buffer {
+type Rgba = [number, number, number, number];
+
+const WHITE: Rgba = [255, 255, 255, 255];
+const GRAY: Rgba = [180, 180, 180, 255];
+const RED: Rgba = [255, 0, 0, 255];
+const TRANSPARENT: Rgba = [0, 0, 0, 0];
+
+function png(width: number, height: number, rgba: Rgba): Buffer {
   const image = new PNG({ width, height });
   for (let offset = 0; offset < image.data.length; offset += 4) {
     image.data.set(rgba, offset);
@@ -26,239 +34,271 @@ function png(
   return PNG.sync.write(image);
 }
 
-function urlShot(key: string, url: string): Shot {
+const HOME = 'http://127.0.0.1:5173/home';
+const ADMIN = 'http://127.0.0.1:5173/admin';
+const NEWS = 'http://127.0.0.1:5173/news';
+const ABOUT = 'http://127.0.0.1:5173/about';
+
+function urlScreen(url: string): Screen {
+  return { key: url, kind: 'url', label: url };
+}
+
+function componentScreen(title: string): Screen {
+  return { key: title, kind: 'component', label: title };
+}
+
+function variant(shotKey: string, extra: Partial<Variant> = {}): Variant {
   return {
-    key,
-    target: { kind: 'url', url },
+    shotKey,
     viewport: { width: 1280, height: 720 },
     colorScheme: 'light',
+    warnings: [],
+    ...extra,
   };
 }
 
-function storyShot(
-  key: string,
-  title: string,
-  name: string,
-  storyId: string,
-): Shot {
-  return {
-    key,
-    target: {
-      kind: 'story',
-      url: `http://127.0.0.1:6006/iframe.html?id=${storyId}&viewMode=story`,
-      storyId,
-      title,
-      name,
-      importPath: './src/Button.stories.tsx',
-    },
-    viewport: { width: 1280, height: 720 },
-    colorScheme: 'dark',
-  };
-}
+const CROP: Crop = {
+  area: { x: 58, y: 40, width: 24, height: 1 },
+  box: { x: 10, y: 20, width: 120, height: 40 },
+  before: png(120, 40, WHITE),
+  after: png(120, 40, GRAY),
+};
 
-const WHITE = png(200, 100, [255, 255, 255, 255]);
-const GRAY = png(200, 100, [180, 180, 180, 255]);
-const TALL_GRAY = png(200, 120, [180, 180, 180, 255]);
-const RED = png(200, 120, [255, 0, 0, 255]);
+const PAGE_BEFORE = png(320, 200, WHITE);
+const PAGE_AFTER = png(320, 200, GRAY);
+const PAGE_DIFF = png(320, 200, RED);
 
-const MIXED: Summary = {
-  version: 1,
+const MIXED: Review = {
   id: 'run-mixed',
   beforeAt: '2026-11-23T08:00:00.000Z',
   afterAt: '2026-11-23T08:05:00.000Z',
-  counts: { changed: 2, error: 1, unchanged: 2, skipped: 1 },
-  shots: [
+  errors: [
     {
-      shot: urlShot('0-about', 'http://127.0.0.1:5173/about'),
-      status: 'unchanged',
-      warnings: [],
-      files: { before: 'before/0-about.png', after: 'after/0-about.png' },
+      screen: urlScreen(ADMIN),
+      variants: [variant('0-admin')],
+      phase: 'after',
+      message: 'net::ERR_CONNECTION_REFUSED at http://127.0.0.1:5173/admin',
+    },
+  ],
+  changed: [
+    {
+      screen: urlScreen(HOME),
+      changes: [
+        {
+          variants: [
+            variant('1-home'),
+            variant('2-home', { viewport: { width: 375, height: 812 } }),
+          ],
+          crops: [CROP],
+          fullPage: false,
+        },
+      ],
     },
     {
-      shot: urlShot('1-home', 'http://127.0.0.1:5173/home'),
-      status: 'changed',
-      diff: {
-        mismatchedPixels: 500,
-        mismatchRatio: 0.025,
-        bbox: { x: 50, y: 25, width: 100, height: 50 },
-      },
-      warnings: [],
-      files: {
-        before: 'before/1-home.png',
-        after: 'after/1-home.png',
-        diff: 'diff/1-home.png',
-      },
+      screen: componentScreen('Button'),
+      changes: [
+        {
+          variants: [
+            variant('3-primary', { story: 'Primary', colorScheme: 'dark' }),
+          ],
+          crops: [],
+          fullPage: true,
+        },
+      ],
     },
+  ],
+  noise: [{ screen: urlScreen(NEWS), variants: [variant('4-news')] }],
+  unchanged: [{ screen: urlScreen(ABOUT), variants: [variant('5-about')] }],
+  skipped: [
     {
-      shot: storyShot('2-disabled', 'Button', 'Disabled', 'button--disabled'),
-      status: 'skipped',
-      skipReason: 'The story is tagged !ui-compare',
-      warnings: [],
-      files: {},
-    },
-    {
-      shot: urlShot('3-admin', 'http://127.0.0.1:5173/admin'),
-      status: 'error',
-      error: {
-        phase: 'after',
-        message: 'net::ERR_CONNECTION_REFUSED at http://127.0.0.1:5173/admin',
-      },
-      warnings: [],
-      files: { before: 'before/3-admin.png' },
-    },
-    {
-      shot: storyShot('4-primary', 'Button', 'Primary', 'button--primary'),
-      status: 'changed',
-      diff: {
-        mismatchedPixels: 400,
-        mismatchRatio: 0.0167,
-        bbox: { x: 0, y: 80, width: 200, height: 40 },
-        dimensions: { before: [200, 100], after: [200, 120] },
-      },
-      unstable: {
-        mismatchRatio: 0.0042,
-        bbox: { x: 0, y: 0, width: 40, height: 10 },
-      },
-      warnings: ['Web fonts were still loading after 5000 ms'],
-      files: {
-        before: 'before/4-primary.png',
-        after: 'after/4-primary.png',
-        diff: 'diff/4-primary.png',
-        unstable: 'unstable/4-primary.png',
-      },
-    },
-    {
-      shot: urlShot('5-contact', 'http://127.0.0.1:5173/contact'),
-      status: 'unchanged',
-      warnings: [],
-      files: { before: 'before/5-contact.png', after: 'after/5-contact.png' },
+      screen: componentScreen('Card'),
+      variants: [variant('6-card', { story: 'Loading' })],
+      reason: 'parameters.vrt.skip is set',
     },
   ],
 };
 
-const MIXED_IMAGES: ReportImages = new Map([
-  ['0-about', { before: WHITE, after: WHITE }],
-  ['1-home', { before: WHITE, after: GRAY, diff: RED }],
-  ['3-admin', { before: WHITE }],
-  ['4-primary', { before: WHITE, after: TALL_GRAY, diff: RED, unstable: GRAY }],
-  ['5-contact', { before: GRAY, after: GRAY }],
+const MIXED_IMAGES: ShotImages = new Map([
+  ['1-home', { before: PAGE_BEFORE, after: PAGE_AFTER, diff: PAGE_DIFF }],
+  ['2-home', { before: PAGE_BEFORE, after: PAGE_AFTER, diff: PAGE_DIFF }],
+  ['3-primary', { before: PAGE_BEFORE, after: PAGE_AFTER, diff: PAGE_DIFF }],
+  [
+    '4-news',
+    {
+      before: PAGE_BEFORE,
+      after: PAGE_AFTER,
+      diff: PAGE_DIFF,
+      unstable: PAGE_AFTER,
+    },
+  ],
+  ['5-about', { before: PAGE_BEFORE, after: PAGE_BEFORE }],
 ]);
 
-const CLEAN: Summary = {
-  version: 1,
+const CLEAN: Review = {
   id: 'run-clean',
   beforeAt: '2026-11-23T08:00:00.000Z',
   afterAt: '2026-11-23T08:05:00.000Z',
-  counts: { changed: 0, error: 0, unchanged: 1, skipped: 0 },
-  shots: [
-    {
-      shot: urlShot('0-about', 'http://127.0.0.1:5173/about'),
-      status: 'unchanged',
-      warnings: [],
-      files: { before: 'before/0-about.png', after: 'after/0-about.png' },
-    },
-  ],
+  errors: [],
+  changed: [],
+  noise: [],
+  unchanged: [{ screen: urlScreen(ABOUT), variants: [variant('0-about')] }],
+  skipped: [],
 };
 
-const EMPTY: Summary = {
-  version: 1,
-  id: 'run-empty',
+const RESIZED: Review = {
+  id: 'run-resized',
   beforeAt: '2026-11-23T08:00:00.000Z',
   afterAt: '2026-11-23T08:05:00.000Z',
-  counts: { changed: 0, error: 0, unchanged: 0, skipped: 0 },
-  shots: [],
-};
-
-function changed(shot: Shot, warnings: string[] = []): ShotResult {
-  return {
-    shot,
-    status: 'changed',
-    diff: {
-      mismatchedPixels: 100,
-      mismatchRatio: 0.01,
-      bbox: { x: 0, y: 0, width: 10, height: 10 },
-    },
-    warnings,
-    files: {},
-  };
-}
-
-function changedRun(id: string, shots: ShotResult[]): Summary {
-  return {
-    version: 1,
-    id,
-    beforeAt: '2026-11-23T08:00:00.000Z',
-    afterAt: '2026-11-23T08:05:00.000Z',
-    counts: { changed: shots.length, error: 0, unchanged: 0, skipped: 0 },
-    shots,
-  };
-}
-
-const TALL = changedRun('run-tall', [
-  changed(urlShot('0-tall', 'http://127.0.0.1:5173/tall')),
-  changed(urlShot('1-short', 'http://127.0.0.1:5173/short')),
-]);
-
-const TALL_IMAGES: ReportImages = new Map([
-  [
-    '0-tall',
+  errors: [],
+  changed: [
     {
-      before: png(200, 4000, [255, 255, 255, 255]),
-      after: png(200, 4000, [180, 180, 180, 255]),
+      screen: urlScreen(HOME),
+      changes: [
+        { variants: [variant('0-wider')], crops: [CROP], fullPage: false },
+      ],
     },
   ],
-  ['1-short', { before: WHITE, after: GRAY }],
-]);
+  noise: [],
+  unchanged: [],
+  skipped: [],
+};
 
-const RESIZED = changedRun('run-resized', [
-  changed(urlShot('0-wider', 'http://127.0.0.1:5173/wider')),
-]);
-
-const RESIZED_IMAGES: ReportImages = new Map([
+const RESIZED_IMAGES: ShotImages = new Map([
   [
     '0-wider',
     {
-      before: png(1280, 800, [255, 255, 255, 255]),
-      after: png(1400, 800, [180, 180, 180, 255]),
+      before: png(1280, 800, WHITE),
+      after: png(1400, 800, GRAY),
+      diff: png(1400, 800, RED),
     },
   ],
 ]);
 
-const HOSTILE: Summary = {
-  version: 1,
+const HOSTILE: Review = {
   id: 'run-</title><script>window.pwned = true</script>',
   beforeAt: '2026-11-23T08:00:00.000Z',
   afterAt: '2026-11-23T08:05:00.000Z',
-  counts: { changed: 0, error: 1, unchanged: 0, skipped: 0 },
-  shots: [
+  errors: [
     {
-      shot: urlShot('0-search', 'http://127.0.0.1:5173/search'),
-      status: 'error',
-      error: {
-        phase: 'before',
-        message:
-          '<img src=x onerror="window.pwned = true"></script><!--<script>',
-      },
-      warnings: [],
-      files: {},
+      screen: urlScreen('http://127.0.0.1:5173/search'),
+      variants: [variant('0-search')],
+      phase: 'before',
+      message: '<img src=x onerror="window.pwned = true"></script><!--<script>',
     },
   ],
+  changed: [],
+  noise: [],
+  unchanged: [],
+  skipped: [],
 };
 
-function embeddedSummary(html: string): unknown {
-  const match =
-    /<script type="application\/json" id="summary">([^<]*)<\/script>/.exec(
-      html,
-    );
-  if (!match?.[1]) throw new Error('the report embeds no summary payload');
+function changedRun(id: string, changed: Review['changed']): Review {
+  return {
+    id,
+    beforeAt: '2026-11-23T08:00:00.000Z',
+    afterAt: '2026-11-23T08:05:00.000Z',
+    errors: [],
+    changed,
+    noise: [],
+    unchanged: [],
+    skipped: [],
+  };
+}
+
+function cropOf(width: number, height: number, before: Rgba): Crop {
+  return {
+    area: { x: 48, y: 48, width: width - 96, height: height - 96 },
+    box: { x: 0, y: 0, width, height },
+    before: png(width, height, before),
+    after: png(width, height, GRAY),
+  };
+}
+
+function embedded(html: string, id: string): unknown {
+  const match = new RegExp(
+    `<script type="application/json" id="${id}">([^<]*)</script>`,
+  ).exec(html);
+  if (!match?.[1]) throw new Error(`the report embeds no ${id} payload`);
   return JSON.parse(match[1]);
 }
 
+function contentSecurityPolicy(html: string): Record<string, string[]> {
+  const match =
+    /<meta http-equiv="Content-Security-Policy" content="([^"]*)">/.exec(html);
+  if (!match?.[1]) throw new Error('the report declares no CSP');
+  return Object.fromEntries(
+    match[1].split(';').map((directive) => {
+      const [name = '', ...values] = directive.trim().split(/\s+/);
+      return [name, values];
+    }),
+  );
+}
+
+const SHA256 = expect.stringMatching(/^'sha256-[A-Za-z0-9+/]{43}='$/);
+
 describe('renderReport payload', () => {
-  test('embeds the summary as JSON that parses back unchanged', () => {
+  test('embeds the review as JSON without a raw "<"', () => {
     const html = renderReport(HOSTILE, new Map());
 
-    expect(embeddedSummary(html)).toStrictEqual(HOSTILE);
+    expect(embedded(html, 'review')).toMatchObject({
+      id: 'run-</title><script>window.pwned = true</script>',
+      errors: [
+        {
+          message:
+            '<img src=x onerror="window.pwned = true"></script><!--<script>',
+        },
+      ],
+    });
+  });
+
+  test('embeds only the images each entry shows, for its first variant', () => {
+    const all = {
+      before: PAGE_BEFORE,
+      after: PAGE_AFTER,
+      diff: PAGE_DIFF,
+      unstable: PAGE_AFTER,
+    };
+    const images: ShotImages = new Map(
+      [
+        '0-admin',
+        '1-home',
+        '2-home',
+        '3-primary',
+        '4-news',
+        '5-about',
+        '6-card',
+      ].map((key) => [key, all]),
+    );
+
+    const shown = embedded(renderReport(MIXED, images), 'images') as Record<
+      string,
+      object
+    >;
+
+    expect(
+      Object.fromEntries(
+        Object.entries(shown).map(([key, kinds]) => [key, Object.keys(kinds)]),
+      ),
+    ).toStrictEqual({
+      '1-home': ['before', 'after', 'diff'],
+      '3-primary': ['before', 'after', 'diff'],
+      '4-news': ['before', 'after', 'unstable'],
+      '5-about': ['before', 'after'],
+      '6-card': ['before', 'after'],
+    });
+  });
+
+  test('allows only its own inline script and style and data: images', () => {
+    expect(
+      contentSecurityPolicy(renderReport(MIXED, MIXED_IMAGES)),
+    ).toStrictEqual({
+      'default-src': ["'none'"],
+      'img-src': ['data:'],
+      'style-src': [SHA256],
+      'script-src': [SHA256],
+      'base-uri': ["'none'"],
+      'form-action': ["'none'"],
+    });
   });
 });
 
@@ -278,31 +318,26 @@ describe('renderReport in Chromium', () => {
     await browser.close();
   });
 
-  async function newPage(): Promise<Page> {
-    const page = await browser.newPage();
+  async function newPage(locale = 'en-US'): Promise<Page> {
+    const page = await browser.newPage({ locale });
     pages.push(page);
     return page;
   }
 
   async function open(
-    summary: Summary,
-    images: ReportImages = new Map(),
+    review: Review,
+    images: ShotImages = new Map(),
+    locale = 'en-US',
   ): Promise<Page> {
-    const page = await newPage();
-    await page.setContent(renderReport(summary, images));
+    const page = await newPage(locale);
+    await page.setContent(renderReport(review, images));
     return page;
   }
 
-  async function listedNames(page: Page): Promise<string[]> {
-    const rows = await page.getByRole('option').allInnerTexts();
-    return rows.map((row) => row.split('\n')[0] ?? '');
-  }
-
-  async function selectedName(page: Page): Promise<string> {
-    const [row = ''] = await page
-      .getByRole('option', { selected: true })
-      .allInnerTexts();
-    return row.split('\n')[0] ?? '';
+  function card(page: Page, label: string): Locator {
+    return page.getByRole('article').filter({
+      has: page.getByRole('heading', { level: 2, name: label, exact: true }),
+    });
   }
 
   async function box(
@@ -311,6 +346,21 @@ describe('renderReport in Chromium', () => {
     const rect = await locator.boundingBox();
     if (!rect) throw new Error('the element is not rendered');
     return rect;
+  }
+
+  async function openFullPage(page: Page, label: string): Promise<Locator> {
+    const target = card(page, label);
+    await target.getByText('View full page', { exact: true }).click();
+    await target.getByRole('group', { name: 'View' }).waitFor();
+    return target;
+  }
+
+  function collectNetworkRequests(page: Page): string[] {
+    const requests: string[] = [];
+    page.on('request', (request) => {
+      if (!request.url().startsWith('data:')) requests.push(request.url());
+    });
+    return requests;
   }
 
   function collectConsoleErrors(page: Page): string[] {
@@ -322,12 +372,13 @@ describe('renderReport in Chromium', () => {
     return errors;
   }
 
-  function collectNetworkRequests(page: Page): string[] {
-    const requests: string[] = [];
-    page.on('request', (request) => {
-      if (!request.url().startsWith('data:')) requests.push(request.url());
-    });
-    return requests;
+  async function openEverything(page: Page): Promise<void> {
+    for (const summary of await page.locator('summary').all()) {
+      await summary.click();
+    }
+    for (const radio of await page.getByRole('radio').all()) {
+      await radio.check();
+    }
   }
 
   // Where the pixel at (x, y) of a screenshot of the given natural size is
@@ -345,604 +396,772 @@ describe('renderReport in Chromium', () => {
     };
   }
 
-  async function horizontalOverflow(locator: Locator): Promise<number> {
-    return locator.evaluate(
-      (element) => element.scrollWidth - element.clientWidth,
+  // How far from the left edge of the named image its pixel at x is drawn.
+  async function offsetOf(
+    page: Page,
+    name: string,
+    naturalWidth: number,
+    x: number,
+  ): Promise<number> {
+    const rect = await box(page.getByRole('img', { name, exact: true }));
+    return (x * rect.width) / naturalWidth;
+  }
+
+  async function imageAt(
+    page: Page,
+    point: { x: number; y: number },
+  ): Promise<string | null> {
+    return page.evaluate(
+      ({ x, y }) =>
+        document.elementFromPoint(x, y)?.getAttribute('alt') ?? null,
+      point,
     );
   }
 
-  async function decodedWidth(page: Page, name: string): Promise<number> {
-    return page
-      .getByRole('img', { name, exact: true })
-      .evaluate(async (image: HTMLImageElement) => {
-        await image.decode();
-        return image.naturalWidth;
-      });
-  }
-
-  test('lists changed shots and then errors, each in summary order, by default', async () => {
+  test('shows capture errors, then the changed screens, then the other screens', async () => {
     const page = await open(MIXED, MIXED_IMAGES);
 
-    expect(await listedNames(page)).toStrictEqual([
-      '127.0.0.1:5173/home',
-      'Button / Primary',
-      '127.0.0.1:5173/admin',
+    expect(
+      await page.getByRole('heading', { level: 2 }).allInnerTexts(),
+    ).toStrictEqual([
+      'Could not capture',
+      'http://127.0.0.1:5173/home',
+      'Button',
+      'Other results',
     ]);
   });
 
-  test('showing every status lists unchanged and then skipped shots after the errors', async () => {
+  test('lists noise, then unchanged, then skipped screens on one line each', async () => {
     const page = await open(MIXED, MIXED_IMAGES);
-
-    await page.getByRole('button', { name: '2 unchanged' }).click();
-    await page.getByRole('button', { name: '1 skipped' }).click();
-
-    expect(await listedNames(page)).toStrictEqual([
-      '127.0.0.1:5173/home',
-      'Button / Primary',
-      '127.0.0.1:5173/admin',
-      '127.0.0.1:5173/about',
-      '127.0.0.1:5173/contact',
-      'Button / Disabled',
-    ]);
-  });
-
-  test('the header shows the run id, both timestamps and the counts per status', async () => {
-    const page = await open(MIXED, MIXED_IMAGES);
-
-    const overview = page.getByRole('complementary', { name: 'Run overview' });
-    expect(await overview.getByRole('term').allInnerTexts()).toStrictEqual([
-      'Run',
-      'Before',
-      'After',
-    ]);
-    expect(await overview.getByRole('definition').first().textContent()).toBe(
-      'run-mixed',
-    );
-    expect(
-      await overview
-        .locator('time')
-        .evaluateAll((times) =>
-          times.map((time) => time.getAttribute('datetime')),
-        ),
-    ).toStrictEqual(['2026-11-23T08:00:00.000Z', '2026-11-23T08:05:00.000Z']);
-    expect(
-      await overview
-        .getByRole('group', { name: 'Filter by status' })
-        .getByRole('button')
-        .allTextContents(),
-    ).toStrictEqual(['2 changed', '1 error', '2 unchanged', '1 skipped']);
-  });
-
-  test('selecting a changed shot shows its Before and After as embedded images', async () => {
-    const page = await open(MIXED, MIXED_IMAGES);
-
-    await page.getByRole('option', { name: /Button \/ Primary/ }).click();
-
-    const before = page.getByRole('img', { name: 'Before screenshot' });
-    const after = page.getByRole('img', { name: 'After screenshot' });
-    expect(await page.getByRole('heading', { level: 2 }).textContent()).toBe(
-      'Button / Primary',
-    );
-    expect(await before.getAttribute('src')).toMatch(
-      /^data:image\/png;base64,/,
-    );
-    expect(await after.getAttribute('src')).toMatch(/^data:image\/png;base64,/);
-    expect(await decodedWidth(page, 'Before screenshot')).toBe(200);
-    expect(await decodedWidth(page, 'After screenshot')).toBe(200);
-  });
-
-  test('a changed shot lists its viewport, color scheme, mismatch, changed area and size change', async () => {
-    const page = await open(MIXED, MIXED_IMAGES);
-
-    await page.getByRole('option', { name: /Button \/ Primary/ }).click();
-
-    const facts = page.getByRole('main').locator('dl');
-    expect(await facts.getByRole('term').allInnerTexts()).toStrictEqual([
-      'Viewport',
-      'Color scheme',
-      'Mismatch',
-      'Changed area',
-      'Size',
-    ]);
-    expect(await facts.getByRole('definition').allInnerTexts()).toStrictEqual([
-      '1280×720',
-      'dark',
-      '1.67% · 400 px',
-      'x 0, y 80, 200×40',
-      '200×100 → 200×120',
-    ]);
-  });
-
-  test('the slider mode stacks After over Before under a divider control', async () => {
-    const page = await open(MIXED, MIXED_IMAGES);
-
-    await page.getByRole('button', { name: 'slider' }).click();
-
-    expect(
-      await page.getByRole('slider', { name: 'Divider position' }).inputValue(),
-    ).toBe('50');
-    expect(
-      await page.getByRole('img', { name: 'Before screenshot' }).isVisible(),
-    ).toBe(true);
-    expect(
-      await page.getByRole('img', { name: 'After screenshot' }).isVisible(),
-    ).toBe(true);
-  });
-
-  test('the blink mode alternates between Before and After', async () => {
-    const page = await open(MIXED, MIXED_IMAGES);
-
-    await page.getByRole('button', { name: 'blink' }).click();
-
-    await expect(
-      page.getByRole('img', { name: 'After screenshot' }).waitFor(),
-    ).resolves.toBeUndefined();
-    await expect(
-      page.getByRole('img', { name: 'Before screenshot' }).waitFor(),
-    ).resolves.toBeUndefined();
-  });
-
-  test('the diff mode shows the diff image', async () => {
-    const page = await open(MIXED, MIXED_IMAGES);
-
-    await page.getByRole('button', { name: 'diff' }).click();
-
-    expect(await decodedWidth(page, 'Diff')).toBe(200);
-    expect(await page.getByRole('img', { name: /screenshot/ }).count()).toBe(0);
-  });
-
-  test('number keys switch the comparison mode', async () => {
-    const page = await open(MIXED, MIXED_IMAGES);
-
-    await page.keyboard.press('4');
 
     expect(
       await page
-        .getByRole('button', { name: 'diff' })
-        .getAttribute('aria-pressed'),
-    ).toBe('true');
-    expect(await page.getByRole('img', { name: 'Diff' }).isVisible()).toBe(
-      true,
+        .getByRole('region', { name: 'Other results' })
+        .getByRole('listitem')
+        .allInnerTexts(),
+    ).toStrictEqual([
+      'Likely noise http://127.0.0.1:5173/news 1280×720\nChanged only where the page already differed between two loads in Before.',
+      'Unchanged http://127.0.0.1:5173/about 1280×720',
+      'Skipped Card Loading · 1280×720\nparameters.vrt.skip is set',
+    ]);
+  });
+
+  test('the headline counts changed screens in English', async () => {
+    const page = await open(MIXED, MIXED_IMAGES);
+
+    expect(await page.getByRole('heading', { level: 1 }).textContent()).toBe(
+      '2 screens changed',
     );
   });
 
-  test('number keys switch the comparison mode while the slider has focus', async () => {
+  test('the sentence under the headline counts the other screens in English', async () => {
     const page = await open(MIXED, MIXED_IMAGES);
-    await page.getByRole('button', { name: 'slider' }).click();
-    await page.getByRole('slider', { name: 'Divider position' }).focus();
-
-    await page.keyboard.press('4');
-
-    expect(await page.getByRole('img', { name: 'Diff' }).isVisible()).toBe(
-      true,
-    );
-  });
-
-  test('the search field narrows the list to matching shots', async () => {
-    const page = await open(MIXED, MIXED_IMAGES);
-
-    await page.getByRole('combobox', { name: 'Filter shots' }).fill('button');
-
-    expect(await listedNames(page)).toStrictEqual(['Button / Primary']);
-  });
-
-  test('ArrowDown selects and shows the next shot', async () => {
-    const page = await open(MIXED, MIXED_IMAGES);
-
-    await page.keyboard.press('ArrowDown');
-
-    expect(await selectedName(page)).toBe('Button / Primary');
-    expect(await page.getByRole('heading', { level: 2 }).textContent()).toBe(
-      'Button / Primary',
-    );
-  });
-
-  test('ArrowUp selects the previous shot', async () => {
-    const page = await open(MIXED, MIXED_IMAGES);
-    await page.getByRole('option', { name: /admin/ }).click();
-
-    await page.keyboard.press('ArrowUp');
-
-    expect(await selectedName(page)).toBe('Button / Primary');
-  });
-
-  test('arrow keys keep focus on the selected option while moving through the list', async () => {
-    const page = await open(MIXED, MIXED_IMAGES);
-    await page.getByRole('option', { selected: true }).focus();
-
-    await page.keyboard.press('ArrowDown');
 
     expect(
       await page
-        .getByRole('option', { selected: true })
-        .evaluate((option) => option === document.activeElement),
+        .getByText(
+          '1 screen could not be captured, 1 screen changed only where Before was unstable, 1 screen unchanged, and 1 screen skipped.',
+          { exact: true },
+        )
+        .isVisible(),
     ).toBe(true);
   });
 
-  test('the changed area outline over After scales with the displayed image', async () => {
-    const summary: Summary = {
-      version: 1,
-      id: 'run-wide',
-      beforeAt: '2026-11-23T08:00:00.000Z',
-      afterAt: '2026-11-23T08:05:00.000Z',
-      counts: { changed: 1, error: 0, unchanged: 0, skipped: 0 },
-      shots: [
+  test('the headline counts screens that could not be captured when nothing changed', async () => {
+    const page = await open({
+      ...CLEAN,
+      errors: [
         {
-          shot: urlShot('0-wide', 'http://127.0.0.1:5173/wide'),
-          status: 'changed',
-          diff: {
-            mismatchedPixels: 500_000,
-            mismatchRatio: 0.25,
-            bbox: { x: 500, y: 250, width: 1000, height: 500 },
-          },
-          warnings: [],
-          files: {},
+          screen: urlScreen(ADMIN),
+          variants: [variant('0-admin')],
+          phase: 'before',
+          message: 'HTTP 500',
+        },
+        {
+          screen: urlScreen(ADMIN),
+          variants: [
+            variant('1-admin', { viewport: { width: 375, height: 812 } }),
+          ],
+          phase: 'after',
+          message: 'net::ERR_CONNECTION_REFUSED',
         },
       ],
-    };
-    const wide = png(2000, 1000, [255, 255, 255, 255]);
+      unchanged: [],
+    });
+
+    expect(await page.getByRole('heading', { level: 1 }).textContent()).toBe(
+      '1 screen could not be captured',
+    );
+  });
+
+  test('a run without shots says no screens were captured', async () => {
+    const page = await open({ ...CLEAN, unchanged: [] });
+
+    expect(await page.getByRole('heading', { level: 1 }).textContent()).toBe(
+      'No screens were captured',
+    );
+  });
+
+  test('the sentence under the headline counts a screen with several errors once', async () => {
+    const page = await open({
+      ...MIXED,
+      errors: [
+        {
+          screen: urlScreen(ADMIN),
+          variants: [variant('0-admin')],
+          phase: 'before',
+          message: 'HTTP 500',
+        },
+        {
+          screen: urlScreen(ADMIN),
+          variants: [
+            variant('7-admin', { viewport: { width: 375, height: 812 } }),
+          ],
+          phase: 'after',
+          message: 'net::ERR_CONNECTION_REFUSED',
+        },
+      ],
+      noise: [],
+      unchanged: [],
+      skipped: [],
+    });
+
+    expect(await page.locator('.lead').textContent()).toBe(
+      '1 screen could not be captured.',
+    );
+  });
+
+  test('the sentence under the headline does not count a changed screen again', async () => {
+    const page = await open({
+      ...changedRun('run-partly', MIXED.changed.slice(0, 1)),
+      unchanged: [
+        {
+          screen: urlScreen(HOME),
+          variants: [
+            variant('7-home', { viewport: { width: 1920, height: 1080 } }),
+          ],
+        },
+        { screen: urlScreen(ABOUT), variants: [variant('5-about')] },
+      ],
+    });
+
+    expect(await page.locator('.lead').textContent()).toBe(
+      '1 screen unchanged.',
+    );
+  });
+
+  test('the headline counts changed screens in Japanese', async () => {
+    const page = await open(MIXED, MIXED_IMAGES, 'ja-JP');
+
+    expect(await page.getByRole('heading', { level: 1 }).textContent()).toBe(
+      '2 画面が変わりました',
+    );
+  });
+
+  test('the Japanese headline reads naturally for twelve screens', async () => {
     const page = await open(
-      summary,
-      new Map([['0-wide', { before: wide, after: wide }]]),
+      changedRun(
+        'run-twelve',
+        Array.from({ length: 12 }, (_, index) => ({
+          screen: urlScreen(`${HOME}/${index}`),
+          changes: [
+            {
+              variants: [variant(`${index}-home`)],
+              crops: [CROP],
+              fullPage: false,
+            },
+          ],
+        })),
+      ),
+      new Map(),
+      'ja-JP',
     );
 
-    const image = await box(
-      page.getByRole('img', { name: 'After screenshot' }),
-    );
-    const outline = await box(
-      page.getByRole('figure', { name: 'After' }).locator('.bbox'),
-    );
-
-    expect(image.width).toBeLessThan(1000);
-    expect((outline.x - image.x) / image.width).toBeCloseTo(0.25, 2);
-    expect((outline.y - image.y) / image.height).toBeCloseTo(0.25, 2);
-    expect(outline.width / image.width).toBeCloseTo(0.5, 2);
-    expect(outline.height / image.height).toBeCloseTo(0.5, 2);
-  });
-
-  test('an unstable shot carries a badge and a note that differences in its box may be noise', async () => {
-    const page = await open(MIXED, MIXED_IMAGES);
-
-    await page.getByRole('option', { name: /Button \/ Primary/ }).click();
-
-    const main = page.getByRole('main');
-    expect(
-      await main.locator('span', { hasText: /^unstable$/ }).isVisible(),
-    ).toBe(true);
-    expect(
-      await main.getByRole('heading', { name: 'Unstable' }).isVisible(),
-    ).toBe(true);
-    expect(await main.getByText(/already differed/).textContent()).toBe(
-      'This page already differed between two loads before the change (0.42% of pixels, x 0, y 0, 40×10). Differences inside that box may be noise.',
+    expect(await page.getByRole('heading', { level: 1 }).textContent()).toBe(
+      '12 画面が変わりました',
     );
   });
 
-  test('an unstable shot offers its unstable image as an extra view', async () => {
-    const page = await open(MIXED, MIXED_IMAGES);
-    await page.getByRole('option', { name: /Button \/ Primary/ }).click();
-
-    await page.getByRole('button', { name: 'unstable' }).click();
-
-    expect(await decodedWidth(page, 'Unstable diff')).toBe(200);
-  });
-
-  test('an error shot shows the failing phase and the message', async () => {
-    const page = await open(MIXED, MIXED_IMAGES);
-
-    await page.getByRole('option', { name: /admin/ }).click();
-
-    const main = page.getByRole('main');
-    expect(
-      await main
-        .getByRole('heading', { name: 'Capture failed during After' })
-        .isVisible(),
-    ).toBe(true);
-    expect(
-      await main
-        .getByText('net::ERR_CONNECTION_REFUSED at http://127.0.0.1:5173/admin')
-        .isVisible(),
-    ).toBe(true);
-  });
-
-  test('a skipped shot shows why it was skipped', async () => {
-    const page = await open(MIXED, MIXED_IMAGES);
-    await page.getByRole('button', { name: '1 skipped' }).click();
-
-    await page.getByRole('option', { name: /Disabled/ }).click();
+  test('the sentence under the headline counts the other screens in Japanese', async () => {
+    const page = await open(MIXED, MIXED_IMAGES, 'ja-JP');
 
     expect(
       await page
-        .getByRole('main')
-        .getByText('The story is tagged !ui-compare')
+        .getByText(
+          '撮影できなかった画面 1、変更前の時点で不安定だった箇所だけが変わった画面 1、変わらなかった画面 1、スキップした画面 1',
+          { exact: true },
+        )
         .isVisible(),
     ).toBe(true);
   });
 
-  test('a shot lists its capture warnings', async () => {
-    const page = await open(MIXED, MIXED_IMAGES);
+  test('a Japanese report declares its language', async () => {
+    const page = await open(MIXED, MIXED_IMAGES, 'ja-JP');
 
-    await page.getByRole('option', { name: /Button \/ Primary/ }).click();
-
-    expect(
-      await page.getByRole('main').getByRole('listitem').allInnerTexts(),
-    ).toStrictEqual(['Web fonts were still loading after 5000 ms']);
+    expect(await page.locator('html').getAttribute('lang')).toBe('ja');
   });
 
-  test('a run without changes or errors offers to show every status', async () => {
+  test('a capture error shows the screen, its conditions, the phase and the message', async () => {
+    const page = await open(MIXED, MIXED_IMAGES);
+
+    expect(
+      await page
+        .getByRole('region', { name: 'Could not capture' })
+        .getByRole('article')
+        .ariaSnapshot(),
+    ).toBe(
+      [
+        '- article:',
+        '  - heading "http://127.0.0.1:5173/admin" [level=3]',
+        '  - paragraph: 1280×720 · Failed while capturing After',
+        '  - paragraph: net::ERR_CONNECTION_REFUSED at http://127.0.0.1:5173/admin',
+      ].join('\n'),
+    );
+  });
+
+  test('a change seen at several viewports lists them once and says it is the same', async () => {
+    const page = await open(MIXED, MIXED_IMAGES);
+    const home = card(page, HOME);
+
+    expect(
+      await home.getByRole('heading', { level: 3 }).allInnerTexts(),
+    ).toStrictEqual(['1280×720 and 375×812']);
+    expect(
+      await home
+        .getByText('The same change appears in each of these.', { exact: true })
+        .isVisible(),
+    ).toBe(true);
+  });
+
+  test('a change at two stories and two settings names each story and setting once', async () => {
+    const mobile = { viewport: { width: 375, height: 812 } };
+    const page = await open(
+      changedRun('run-stories', [
+        {
+          screen: componentScreen('Button'),
+          changes: [
+            {
+              variants: [
+                variant('0-primary', { story: 'Primary' }),
+                variant('1-primary', { story: 'Primary', ...mobile }),
+                variant('2-secondary', { story: 'Secondary' }),
+                variant('3-secondary', { story: 'Secondary', ...mobile }),
+              ],
+              crops: [CROP],
+              fullPage: false,
+            },
+          ],
+        },
+      ]),
+    );
+
+    expect(
+      await card(page, 'Button')
+        .getByRole('heading', { level: 3 })
+        .textContent(),
+    ).toBe('Primary and Secondary · 1280×720 and 375×812');
+  });
+
+  test('a warning carried by two merged variants appears once', async () => {
+    const warnings = ['Vite reported an error on another page'];
+    const page = await open(
+      changedRun('run-warned', [
+        {
+          screen: urlScreen(HOME),
+          changes: [
+            {
+              variants: [
+                variant('0-home', { warnings }),
+                variant('1-home', {
+                  warnings,
+                  viewport: { width: 375, height: 812 },
+                }),
+              ],
+              crops: [CROP],
+              fullPage: false,
+            },
+          ],
+        },
+      ]),
+    );
+
+    expect(
+      await card(page, HOME).getByRole('listitem').allInnerTexts(),
+    ).toStrictEqual(['Warning: Vite reported an error on another page']);
+  });
+
+  test('a change that resized the page names both page sizes', async () => {
+    const page = await open(
+      changedRun('run-taller', [
+        {
+          screen: urlScreen(HOME),
+          changes: [
+            {
+              variants: [variant('0-home')],
+              crops: [CROP],
+              fullPage: false,
+              dimensions: { before: [1280, 1000], after: [1280, 1600] },
+            },
+          ],
+        },
+      ]),
+    );
+
+    expect(
+      await card(page, HOME)
+        .getByText('Page size 1280×1000 → 1280×1600', { exact: true })
+        .isVisible(),
+    ).toBe(true);
+  });
+
+  test('a story change names the story and the dark scheme under a Storybook tag', async () => {
+    const page = await open(MIXED, MIXED_IMAGES);
+    const button = card(page, 'Button');
+
+    expect(await button.getByRole('heading', { level: 3 }).textContent()).toBe(
+      'Primary · 1280×720 dark',
+    );
+    expect(
+      await button.getByText('Storybook', { exact: true }).isVisible(),
+    ).toBe(true);
+  });
+
+  test('a crop shows Before and After as embedded images at natural size', async () => {
+    const page = await open(MIXED, MIXED_IMAGES);
+
+    const shown = await Promise.all(
+      ['Before', 'After'].map(async (kind) => {
+        const image = page.getByRole('img', {
+          name: `${kind}: ${HOME}`,
+          exact: true,
+        });
+        const { width, height } = await box(image);
+        const source = await image.evaluate((element: HTMLImageElement) =>
+          element.src.slice(0, 22),
+        );
+        return { source, width, height };
+      }),
+    );
+
+    expect(shown).toStrictEqual([
+      { source: 'data:image/png;base64,', width: 120, height: 40 },
+      { source: 'data:image/png;base64,', width: 120, height: 40 },
+    ]);
+  });
+
+  test('a crop outlines the changed area on Before and After', async () => {
+    const page = await open(MIXED, MIXED_IMAGES);
+
+    const outlines = await Promise.all(
+      ['Before', 'After'].map(async (kind) => {
+        const image = page.getByRole('img', {
+          name: `${kind}: ${HOME}`,
+          exact: true,
+        });
+        const shown = await box(image);
+        const mark = await box(
+          image.locator('xpath=following-sibling::span[@class="mark"]'),
+        );
+        return {
+          x: mark.x - shown.x,
+          y: mark.y - shown.y,
+          width: mark.width,
+          height: mark.height,
+        };
+      }),
+    );
+
+    expect(outlines).toStrictEqual([
+      { x: 48, y: 20, width: 24, height: 2 },
+      { x: 48, y: 20, width: 24, height: 2 },
+    ]);
+  });
+
+  test('a crop narrower than half the pane shows After next to Before', async () => {
+    const page = await open(MIXED, MIXED_IMAGES);
+
+    const before = await box(
+      page.getByRole('img', { name: `Before: ${HOME}`, exact: true }),
+    );
+    const after = await box(
+      page.getByRole('img', { name: `After: ${HOME}`, exact: true }),
+    );
+
+    expect(after.y).toBe(before.y);
+    expect(after.x).toBeGreaterThan(before.x + before.width);
+  });
+
+  test('a crop wider than half the pane is drawn at its natural width', async () => {
+    const page = await open(
+      changedRun('run-wide', [
+        {
+          screen: urlScreen(HOME),
+          changes: [
+            {
+              variants: [variant('0-home')],
+              crops: [cropOf(640, 160, WHITE)],
+              fullPage: false,
+            },
+          ],
+        },
+      ]),
+    );
+
+    const shown = await Promise.all(
+      ['Before', 'After'].map(
+        async (kind) =>
+          (
+            await box(
+              page.getByRole('img', { name: `${kind}: ${HOME}`, exact: true }),
+            )
+          ).width,
+      ),
+    );
+
+    expect(shown).toStrictEqual([640, 640]);
+  });
+
+  test('a crop wider than half the pane shows After below Before', async () => {
+    const page = await open(
+      changedRun('run-wide', [
+        {
+          screen: urlScreen(HOME),
+          changes: [
+            {
+              variants: [variant('0-home')],
+              crops: [cropOf(640, 160, WHITE)],
+              fullPage: false,
+            },
+          ],
+        },
+      ]),
+    );
+
+    const before = await box(
+      page.getByRole('img', { name: `Before: ${HOME}`, exact: true }),
+    );
+    const after = await box(
+      page.getByRole('img', { name: `After: ${HOME}`, exact: true }),
+    );
+
+    expect(after.y).toBeGreaterThan(before.y + before.height);
+  });
+
+  test('each area of a change with two crops is numbered', async () => {
+    const page = await open(
+      changedRun('run-two-areas', [
+        {
+          screen: urlScreen(HOME),
+          changes: [
+            {
+              variants: [variant('0-home')],
+              crops: [CROP, { ...CROP, box: { ...CROP.box, y: 400 } }],
+              fullPage: false,
+            },
+          ],
+        },
+      ]),
+    );
+
+    expect(
+      await card(page, HOME)
+        .getByText(/^Area \d of \d$/)
+        .allInnerTexts(),
+    ).toStrictEqual(['Area 1 of 2', 'Area 2 of 2']);
+  });
+
+  test('a transparent part of a crop shows a checkerboard', async () => {
+    const page = await open(
+      changedRun('run-no-page', [
+        {
+          screen: urlScreen(HOME),
+          changes: [
+            {
+              variants: [variant('0-home')],
+              crops: [cropOf(160, 64, TRANSPARENT)],
+              fullPage: false,
+            },
+          ],
+        },
+      ]),
+    );
+    const before = await box(
+      page.getByRole('img', { name: `Before: ${HOME}`, exact: true }),
+    );
+
+    const shot = PNG.sync.read(
+      await page.screenshot({
+        clip: { x: before.x, y: before.y, width: 16, height: 8 },
+      }),
+    );
+    const colorAt = (x: number, y: number): string =>
+      shot.data
+        .subarray((y * shot.width + x) * 4, (y * shot.width + x) * 4 + 4)
+        .join(',');
+
+    expect(new Set([colorAt(2, 2), colorAt(10, 2)]).size).toBe(2);
+  });
+
+  test('a full-page change shows the full Before and After pages', async () => {
+    const page = await open(MIXED, MIXED_IMAGES);
+    const button = card(page, 'Button');
+
+    expect(
+      await button
+        .getByRole('img', { name: /^(Before|After): Button, full page$/ })
+        .count(),
+    ).toBe(2);
+  });
+
+  test('View full page builds no images until it is opened', async () => {
+    const page = await open(MIXED, MIXED_IMAGES);
+
+    expect(await card(page, HOME).locator('details img').count()).toBe(0);
+  });
+
+  test('opening View full page offers side by side, slider and diff, side by side first', async () => {
+    const page = await open(MIXED, MIXED_IMAGES);
+
+    const home = await openFullPage(page, HOME);
+
+    expect(await home.getByRole('group', { name: 'View' }).ariaSnapshot()).toBe(
+      [
+        '- group "View":',
+        '  - text: View',
+        '  - radio "Side by side" [checked]',
+        '  - text: Side by side',
+        '  - radio "Slider"',
+        '  - text: Slider',
+        '  - radio "Diff"',
+        '  - text: Diff',
+      ].join('\n'),
+    );
+  });
+
+  test('side by side shows the full pages of the first variant', async () => {
+    const page = await open(MIXED, MIXED_IMAGES);
+
+    const home = await openFullPage(page, HOME);
+
+    expect(
+      await home
+        .getByRole('img', { name: `Before: ${HOME}, full page`, exact: true })
+        .isVisible(),
+    ).toBe(true);
+  });
+
+  test('choosing Diff shows the diff image', async () => {
+    const page = await open(MIXED, MIXED_IMAGES);
+    const home = await openFullPage(page, HOME);
+
+    await home.getByRole('radio', { name: 'Diff' }).check();
+
+    expect(
+      await home
+        .getByRole('img', { name: `Diff: ${HOME}`, exact: true })
+        .isVisible(),
+    ).toBe(true);
+  });
+
+  test('the slider draws Before and After from one top-left corner at one scale', async () => {
+    const page = await open(RESIZED, RESIZED_IMAGES);
+    const home = await openFullPage(page, HOME);
+    await home.getByRole('radio', { name: 'Slider' }).check();
+
+    const point = { x: 1000, y: 600 };
+    const before = await screenPoint(
+      page,
+      `Before: ${HOME}, full page`,
+      { width: 1280, height: 800 },
+      point,
+    );
+    const after = await screenPoint(
+      page,
+      `After: ${HOME}, full page`,
+      { width: 1400, height: 800 },
+      point,
+    );
+
+    expect(after.x).toBeCloseTo(before.x, 0);
+    expect(after.y).toBeCloseTo(before.y, 0);
+  });
+
+  test('side by side draws Before and After at one scale when their widths differ', async () => {
+    const page = await open(RESIZED, RESIZED_IMAGES);
+    await openFullPage(page, HOME);
+
+    const before = await offsetOf(
+      page,
+      `Before: ${HOME}, full page`,
+      1280,
+      1000,
+    );
+    const after = await offsetOf(page, `After: ${HOME}, full page`, 1400, 1000);
+
+    expect(after).toBeCloseTo(before, 0);
+  });
+
+  test('an arrow key moves the divider by one percent', async () => {
+    const page = await open(RESIZED, RESIZED_IMAGES);
+    const home = await openFullPage(page, HOME);
+    await home.getByRole('radio', { name: 'Slider' }).check();
+    const divider = home.getByRole('slider', { name: 'Divider position' });
+
+    await divider.focus();
+    await page.keyboard.press('ArrowRight');
+
+    expect(await divider.inputValue()).toBe('51');
+  });
+
+  test('moving the divider shows Before up to the divider and After past it', async () => {
+    const page = await open(RESIZED, RESIZED_IMAGES);
+    await page.setViewportSize({ width: 1280, height: 2400 });
+    const home = await openFullPage(page, HOME);
+    await home.getByRole('radio', { name: 'Slider' }).check();
+    const point = await screenPoint(
+      page,
+      `Before: ${HOME}, full page`,
+      { width: 1280, height: 800 },
+      { x: 900, y: 400 },
+    );
+    expect(await imageAt(page, point)).toBe(`After: ${HOME}, full page`);
+
+    await home.getByRole('slider', { name: 'Divider position' }).fill('90');
+
+    expect(await imageAt(page, point)).toBe(`Before: ${HOME}, full page`);
+  });
+
+  test('opening an end line shows the Before and After of its first variant', async () => {
+    const page = await open(MIXED, MIXED_IMAGES);
+    const before = page.getByRole('img', {
+      name: `Before: ${ABOUT}`,
+      exact: true,
+    });
+    expect(await before.count()).toBe(0);
+
+    await page.getByText(ABOUT, { exact: true }).click();
+
+    await expect.poll(() => before.isVisible()).toBe(true);
+  });
+
+  test('opening a noise line shows the differences between the two Before loads', async () => {
+    const page = await open(MIXED, MIXED_IMAGES);
+
+    await page.getByText(NEWS, { exact: true }).click();
+
+    await expect
+      .poll(() =>
+        page
+          .getByRole('img', {
+            name: `Differences between the two Before loads: ${NEWS}`,
+            exact: true,
+          })
+          .isVisible(),
+      )
+      .toBe(true);
+  });
+
+  test('a run where nothing changed or failed says so and shows no cards', async () => {
     const page = await open(
       CLEAN,
-      new Map([['0-about', { before: WHITE, after: WHITE }]]),
+      new Map([['0-about', { before: PAGE_BEFORE, after: PAGE_BEFORE }]]),
     );
 
-    expect(await page.getByRole('option').count()).toBe(0);
-    await page.getByRole('button', { name: 'Show all statuses' }).click();
-
-    expect(await listedNames(page)).toStrictEqual(['127.0.0.1:5173/about']);
+    expect(await page.getByRole('heading', { level: 1 }).textContent()).toBe(
+      'No screens changed',
+    );
+    expect(await page.getByRole('article').count()).toBe(0);
   });
 
-  test('a run without shots shows an empty state instead of a list', async () => {
-    const page = await open(EMPTY);
+  test('markup in a review string is shown as text and never runs', async () => {
+    const page = await open(HOSTILE);
 
     expect(
       await page
-        .getByRole('heading', { name: 'No shots in this run' })
+        .getByText(
+          '<img src=x onerror="window.pwned = true"></script><!--<script>',
+          { exact: true },
+        )
         .isVisible(),
     ).toBe(true);
-    expect(await page.getByRole('listbox').isVisible()).toBe(false);
+    expect(await page.evaluate(() => 'pwned' in window)).toBe(false);
   });
 
-  test('summary strings containing markup are shown as text', async () => {
+  test('the title shows a run id with markup as text', async () => {
     const page = await open(HOSTILE);
 
     expect(await page.title()).toBe(
       'ui-compare · run-</title><script>window.pwned = true</script>',
     );
-    expect(
-      await page
-        .getByText(
-          '<img src=x onerror="window.pwned = true"></script><!--<script>',
-        )
-        .isVisible(),
-    ).toBe(true);
-    expect(await page.getByRole('img').count()).toBe(0);
-    expect(await page.evaluate(() => 'pwned' in window)).toBe(false);
   });
 
-  test('switching through every shot and mode logs no console errors', async () => {
-    const page = await newPage();
-    const errors = collectConsoleErrors(page);
-    await page.setContent(renderReport(MIXED, MIXED_IMAGES));
-
-    await page.getByRole('button', { name: '2 unchanged' }).click();
-    await page.getByRole('button', { name: '1 skipped' }).click();
-    for (let shot = 0; shot < 6; shot++) {
-      for (const key of ['1', '2', '3', '4', '5']) {
-        await page.keyboard.press(key);
-      }
-      await page.keyboard.press('ArrowDown');
-    }
-
-    expect(errors).toStrictEqual([]);
-  });
-
-  test('the report makes no network request', async () => {
+  test('opening every disclosure and view requests nothing but data: URLs', async () => {
     const page = await newPage();
     const requests = collectNetworkRequests(page);
-
     await page.setContent(renderReport(MIXED, MIXED_IMAGES));
-    await page.getByRole('button', { name: 'slider' }).click();
+
+    await openEverything(page);
 
     expect(requests).toStrictEqual([]);
   });
 
-  test('the verdict reads the review count and its noun as separate words', async () => {
-    const page = await open(MIXED, MIXED_IMAGES);
+  test('opening every disclosure and view logs no console errors', async () => {
+    const page = await newPage();
+    const errors = collectConsoleErrors(page);
+    await page.setContent(renderReport(MIXED, MIXED_IMAGES));
 
-    expect(await page.getByRole('heading', { level: 1 }).ariaSnapshot()).toBe(
-      '- heading "3 shots to review" [level=1]',
-    );
+    await openEverything(page);
+
+    expect(errors).toStrictEqual([]);
   });
 
-  test('a long shot name does not widen the page at 320px', async () => {
+  test('nothing widens the page at 320px', async () => {
+    const long = `http://127.0.0.1:5173/${'segment/'.repeat(12)}?query=${'0123456789abcdef'.repeat(4)}`;
     const page = await open(
-      changedRun('run-long-name', [
-        changed(
-          storyShot(
-            '0-range',
-            'Components/Forms/DatePicker',
-            'With Range Selection',
-            'components-forms-datepicker--with-range-selection',
-          ),
-        ),
-      ]),
-      new Map([['0-range', { before: WHITE, after: GRAY }]]),
+      {
+        ...MIXED,
+        errors: [
+          {
+            screen: urlScreen(long),
+            variants: [variant('0-admin')],
+            phase: 'after',
+            message: `Failed to load ${long}`,
+          },
+        ],
+        changed: [
+          {
+            screen: urlScreen(long),
+            changes: [
+              {
+                variants: [
+                  variant('1-home', { warnings: [`Failed to load ${long}`] }),
+                ],
+                crops: [
+                  {
+                    area: { x: 100, y: 10, width: 1000, height: 20 },
+                    box: { x: 0, y: 0, width: 1200, height: 40 },
+                    before: png(1200, 40, WHITE),
+                    after: png(1200, 40, GRAY),
+                  },
+                ],
+                fullPage: false,
+              },
+            ],
+          },
+        ],
+      },
+      MIXED_IMAGES,
     );
-
     await page.setViewportSize({ width: 320, height: 640 });
 
-    expect(await horizontalOverflow(page.locator('html'))).toBe(0);
-  });
-
-  test('a long unbroken warning wraps inside the stage at 375px', async () => {
-    const page = await open(
-      changedRun('run-long-warning', [
-        changed(urlShot('0-home', 'http://127.0.0.1:5173/home'), [
-          `Failed to load http://127.0.0.1:5173/node_modules/.vite/deps/chunk.js?v=${'0123456789abcdef'.repeat(8)}`,
-        ]),
-      ]),
-      new Map([['0-home', { before: WHITE, after: GRAY }]]),
-    );
-
-    await page.setViewportSize({ width: 375, height: 667 });
+    await openEverything(page);
 
     expect(
-      await horizontalOverflow(
-        page.getByRole('region', { name: 'Comparison' }),
+      await page.evaluate(
+        () =>
+          document.documentElement.scrollWidth -
+          document.documentElement.clientWidth,
       ),
     ).toBe(0);
-  });
-
-  test('the slider draws Before and After from one top-left corner at one scale', async () => {
-    const page = await open(RESIZED, RESIZED_IMAGES);
-
-    await page.getByRole('button', { name: 'slider' }).click();
-
-    const point = { x: 1000, y: 600 };
-    const before = await screenPoint(
-      page,
-      'Before screenshot',
-      { width: 1280, height: 800 },
-      point,
-    );
-    const after = await screenPoint(
-      page,
-      'After screenshot',
-      { width: 1400, height: 800 },
-      point,
-    );
-    expect(after.x).toBeCloseTo(before.x, 0);
-    expect(after.y).toBeCloseTo(before.y, 0);
-  });
-
-  test('blink draws Before and After from one top-left corner at one scale', async () => {
-    const page = await newPage();
-    await page.clock.install();
-    await page.setContent(renderReport(RESIZED, RESIZED_IMAGES));
-    await page.getByRole('button', { name: 'blink' }).click();
-
-    const point = { x: 1000, y: 600 };
-    const before = await screenPoint(
-      page,
-      'Before screenshot',
-      { width: 1280, height: 800 },
-      point,
-    );
-    await page.clock.runFor(700);
-    const after = await screenPoint(
-      page,
-      'After screenshot',
-      { width: 1400, height: 800 },
-      point,
-    );
-
-    expect(after.x).toBeCloseTo(before.x, 0);
-    expect(after.y).toBeCloseTo(before.y, 0);
-  });
-
-  test('switching the mode keeps a tall shot scrolled to the same place', async () => {
-    const page = await open(TALL, TALL_IMAGES);
-    const stage = page.getByRole('region', { name: 'Comparison' });
-    await stage.evaluate((element) => {
-      element.scrollTop = element.scrollHeight / 2;
-    });
-
-    await page.keyboard.press('2');
-
-    expect(
-      await stage.evaluate(
-        (element) => element.scrollTop / element.scrollHeight,
-      ),
-    ).toBeCloseTo(0.5, 2);
-  });
-
-  test('toggling a status that keeps the selected shot leaves the slider where it was', async () => {
-    const page = await open(MIXED, MIXED_IMAGES);
-    await page.getByRole('button', { name: 'slider' }).click();
-    const slider = page.getByRole('slider', { name: 'Divider position' });
-    await slider.fill('80');
-
-    await page.getByRole('button', { name: '2 unchanged' }).click();
-
-    expect(await slider.inputValue()).toBe('80');
-  });
-
-  test('showing more statuses enables Next shot on what was the last shot', async () => {
-    const page = await open(MIXED, MIXED_IMAGES);
-    await page.getByRole('option', { name: /admin/ }).click();
-    const next = page.getByRole('button', { name: 'Next shot' });
-    expect(await next.getAttribute('aria-disabled')).toBe('true');
-
-    await page.getByRole('button', { name: '2 unchanged' }).click();
-
-    expect(await next.getAttribute('aria-disabled')).toBeNull();
-  });
-
-  test('ArrowUp on the first shot leaves focus on the same option', async () => {
-    const page = await open(MIXED, MIXED_IMAGES);
-    const option = page.getByRole('option', { selected: true });
-    await option.focus();
-    const focused = await option.elementHandle();
-
-    await page.keyboard.press('ArrowUp');
-
-    expect(
-      await focused.evaluate((element) => element === document.activeElement),
-    ).toBe(true);
-  });
-
-  test('ArrowDown confirming an IME candidate in the search field keeps the selection', async () => {
-    const page = await open(MIXED, MIXED_IMAGES);
-
-    await page
-      .getByRole('combobox', { name: 'Filter shots' })
-      .dispatchEvent('keydown', { key: 'ArrowDown', isComposing: true });
-
-    expect(await selectedName(page)).toBe('127.0.0.1:5173/home');
-  });
-
-  test('ArrowDown with keyCode 229 in the search field keeps the selection', async () => {
-    const page = await open(MIXED, MIXED_IMAGES);
-
-    await page
-      .getByRole('combobox', { name: 'Filter shots' })
-      .dispatchEvent('keydown', { key: 'ArrowDown', keyCode: 229 });
-
-    expect(await selectedName(page)).toBe('127.0.0.1:5173/home');
-  });
-
-  test('Escape cancelling an IME composition keeps the search query', async () => {
-    const page = await open(MIXED, MIXED_IMAGES);
-    const search = page.getByRole('combobox', { name: 'Filter shots' });
-    await search.fill('home');
-
-    await search.dispatchEvent('keydown', { key: 'Escape', isComposing: true });
-
-    expect(await search.inputValue()).toBe('home');
-  });
-
-  test('a composing keydown outside the search field keeps the selection', async () => {
-    const page = await open(MIXED, MIXED_IMAGES);
-
-    await page
-      .locator('body')
-      .dispatchEvent('keydown', { key: 'ArrowDown', isComposing: true });
-
-    expect(await selectedName(page)).toBe('127.0.0.1:5173/home');
-  });
-
-  test('Tab moves from the pager into the scrollable stage', async () => {
-    const page = await open(MIXED, MIXED_IMAGES);
-    await page.getByRole('button', { name: 'Next shot' }).focus();
-
-    await page.keyboard.press('Tab');
-
-    expect(
-      await page
-        .getByRole('region', { name: 'Comparison' })
-        .evaluate((stage) => stage === document.activeElement),
-    ).toBe(true);
-  });
-
-  test('ArrowDown on the focused stage scrolls it instead of moving to the next shot', async () => {
-    const page = await open(TALL, TALL_IMAGES);
-    const stage = page.getByRole('region', { name: 'Comparison' });
-    await stage.focus();
-
-    await page.keyboard.press('ArrowDown');
-
-    expect(await selectedName(page)).toBe('127.0.0.1:5173/tall');
-    await expect
-      .poll(() => stage.evaluate((element) => element.scrollTop))
-      .toBeGreaterThan(0);
   });
 });

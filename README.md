@@ -2,7 +2,7 @@
 
 Capture pages and Storybook stories before and after a UI change, and compare them in one HTML report.
 
-`ui-compare` is built for changes made by coding agents: the agent captures Before, edits the code, captures After, and hands you a report that shows every shot side by side with its pixel diff. It runs on your machine against the dev server or Storybook you already have running. Nothing is committed, and there is no baseline to maintain.
+`ui-compare` is built for changes made by coding agents: the agent captures Before, edits the code, captures After, and hands you a one-page report that shows, screen by screen, each changed area in Before and After side by side. It runs on your machine against the dev server or Storybook you already have running. Nothing is committed, and there is no baseline to maintain.
 
 ## Install
 
@@ -23,20 +23,27 @@ gh skill install k35o/ui-compare
 
 ```sh
 # 1. Before editing: capture the targets and note the run id
-ui-compare before http://localhost:5173/ http://localhost:5173/settings
-# Captured Before for run 3k9x2a (2 shots)
+ui-compare before http://localhost:5173/ http://localhost:5173/settings --viewport 1280x720 --viewport 375x812
+# Captured Before for run 3k9x2a: 2 screens, 4 shots
+#   ok        http://localhost:5173/  1280x720, 375x812
+#   ok        http://localhost:5173/settings  1280x720, 375x812
+# Next: make the change, then run: ui-compare after 3k9x2a
 
 # 2. Change the code
 
 # 3. Capture again and compare (repeat after every round of edits)
 ui-compare after 3k9x2a
-# Compared run 3k9x2a: 1 changed, 1 unchanged, 0 errors, 0 skipped
-#   changed    http://localhost:5173/  1280x720 light  0.28% at x=555 y=243 170x42  .ui-compare/3k9x2a/diff/...
+# Compared run 3k9x2a: 1 screen changed, 0 errors
+#   changed    http://localhost:5173/
+#     1280x720, 375x812: 1 area at x=555 y=243 170x42 (in 1280x720)  .ui-compare/3k9x2a/diff/001-localhost-5173-1280x720-light.png
+#   unchanged  http://localhost:5173/settings  1280x720, 375x812
 # Report:  .ui-compare/3k9x2a/report.html
 # Summary: .ui-compare/3k9x2a/summary.json
 ```
 
 `after` always compares with the Before of its run, so the report covers the whole change, however many times you run it.
+
+The output is grouped by screen: a page, or a Storybook component with all its stories. Each line under a changed screen is one change: where it was seen, its areas (three at most, then a count of the rest) and a diff image. A change with five or more areas, or areas that cover more than half of the page, reads `changed across the page` instead. A change seen at several viewports, color schemes or stories is listed once with all of them; its areas and diff image are those of the one named in parentheses, such as `(in 1280x720)` or `(in Primary · 1280x720)`, because the same change can sit at other coordinates at another viewport. When the page grew or shrank, the line also gives both page sizes, such as `page size 1280x720 -> 1280x1600`. Errors come first; `noise`, `unchanged` and `skipped` screens get one line each at the end. The color scheme is named only when it is `dark`.
 
 ### Targets
 
@@ -58,11 +65,11 @@ Stories need Storybook 8.5 or later, which reports when a story has finished ren
 | `--storybook <url>`       |            | Base URL of a running Storybook                        |
 | `--story <pattern>`       | all        | Story id or glob over story files; repeatable          |
 
-Every target is captured at every viewport × color scheme.
+Every target is captured at every viewport × color scheme. Passing `--viewport` or `--color-scheme` replaces its default rather than adding to it.
 
 ### Unstable pages
 
-`before` loads every shot twice. When the two loads differ (a clock, random data, a carousel), the shot is reported as `unstable` together with the area that moved. Mask that area with `--mask` and run `before` again; differences inside an unstable area are marked as possible noise in the report.
+`before` loads every shot twice. When the two loads differ (a clock, random data, a carousel), the shot is reported as `unstable` together with the area that moved. Mask that area with `--mask` and run `before` again. A shot that later changes only in or right next to those areas is reported as `noise`, not as a change.
 
 ### Exit codes
 
@@ -85,11 +92,22 @@ Each run lives in `.ui-compare/<id>/` under the current directory. The folder ca
 ├── unstable/      differences between the two Before loads
 ├── after/         After shots (replaced by every `after`)
 ├── diff/          pixel diffs of changed shots
-├── summary.json   per-shot status, changed area and image paths
-└── report.html    the report, with every image embedded
+├── summary.json   per-shot status, changed areas and image paths
+└── report.html    the report, with its images embedded
 ```
 
-`summary.json` lists every shot with its `status` (`changed`, `unchanged`, `error`, `skipped`), the mismatch ratio and the bounding box of the changed pixels, so an agent can spot changes outside the area it meant to edit without reading the images.
+`summary.json` lists every shot with its `status` (`changed`, `unchanged`, `error`, `skipped`), the mismatch ratio, the bounding box of the changed pixels, each separate changed area (`regions`) and, when the page size changed, the Before and After sizes (`dimensions`), so an agent can spot changes outside the area it meant to edit without reading the images. Shots reported as `noise` have the status `changed` here.
+
+### The report
+
+`report.html` is a single page per run, read from top to bottom like the before/after section of a pull request:
+
+- The headline counts changed screens: pages, and Storybook components with all their stories.
+- Capture errors come first, with the screen and the reason.
+- Each changed screen gets a card. Every changed area is cropped with some margin and shown at its natural size, Before next to After, with the area outlined. With five or more areas, or areas that cover more than half of the page, the full page is shown instead. The same change at several viewports, color schemes or stories is shown once, with the conditions listed. **View full page** shows the whole page side by side, with a slider, or as the pixel diff.
+- At the end, one line each for screens that changed only where they were unstable in Before, unchanged screens and skipped screens. Open a noise or unchanged line to see its images.
+
+The page is in Japanese when the browser language is Japanese, and in English otherwise.
 
 ## How shots are taken
 
